@@ -8,3 +8,5 @@ pub mod scanner;
 pub mod startup;
 pub mod startup_state;
 pub mod state;
+pub mod uninstall;
+pub mod uninstall_state;

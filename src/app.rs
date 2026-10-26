@@ -3,6 +3,7 @@ use crate::{
     core::registry_state::RegistryState,
     core::startup_state::StartupState,
     core::state::CleanupState,
+    core::uninstall_state::UninstallState,
     theme, ui, win,
 };
 use std::time::{Duration, Instant};
@@ -43,9 +44,7 @@ impl Page {
                 "Безопасная проверка реестра и обязательный .reg-бэкап перед изменениями."
             }
             Self::Startup => "Реестр Run/RunOnce и папки «Автозагрузка»: обратимое отключение.",
-            Self::Programs => {
-                "Установленное ПО, штатные деинсталляторы и поиск следов после удаления."
-            }
+            Self::Programs => "Установленные программы и запуск их штатных деинсталляторов.",
             Self::Settings => "Правила очистки, расположение журналов и сведения о сборке.",
         }
     }
@@ -63,6 +62,7 @@ pub struct ChipCleanApp {
     pub cleanup: CleanupState,
     pub registry: RegistryState,
     pub startup: StartupState,
+    pub programs: UninstallState,
     pub disk: Option<win::disk::DiskSpace>,
     pub elevated: bool,
     toast: Option<Toast>,
@@ -76,6 +76,7 @@ impl ChipCleanApp {
         let cleanup = CleanupState::new(&settings);
         let registry = RegistryState::new();
         let startup = StartupState::new();
+        let programs = UninstallState::new();
 
         Self {
             page: Page::Cleanup,
@@ -83,6 +84,7 @@ impl ChipCleanApp {
             cleanup,
             registry,
             startup,
+            programs,
             disk: win::disk::system_drive_space().ok(),
             elevated: win::elevation::is_elevated(),
             toast: None,
@@ -164,7 +166,7 @@ impl eframe::App for ChipCleanApp {
                 Page::Cleanup => ui::cleanup::show(ui, &mut self.cleanup, &mut self.settings),
                 Page::Registry => ui::registry::show(ui, &mut self.registry),
                 Page::Startup => ui::startup::show(ui, &mut self.startup),
-                Page::Programs => ui::uninstall::show(ui),
+                Page::Programs => ui::uninstall::show(ui, &mut self.programs),
                 Page::Settings => ui::settings::show(ui, &mut self.settings),
             });
 
