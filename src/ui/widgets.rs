@@ -169,6 +169,37 @@ fn draw_checkbox(ui: &mut Ui, center: egui::Pos2, checked: bool, muted: bool) {
     }
 }
 
+pub fn confirmation_checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> bool {
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
+
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(7), SURFACE_2);
+    }
+
+    draw_checkbox(
+        ui,
+        rect.left_center() + Vec2::new(12.0, 0.0),
+        *checked,
+        false,
+    );
+    ui.painter().text(
+        rect.left_center() + Vec2::new(32.0, 0.0),
+        Align2::LEFT_CENTER,
+        label,
+        font(10.5),
+        if *checked { TEXT } else { TEXT_MUTED },
+    );
+
+    if response.clicked() {
+        *checked = !*checked;
+        true
+    } else {
+        false
+    }
+}
+
 pub fn static_checkbox(ui: &mut Ui, checked: bool, muted: bool) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
     let outer = if muted { BORDER } else { ACCENT };
@@ -243,6 +274,27 @@ pub fn secondary_button(ui: &mut Ui, label: &str) -> Response {
         Align2::CENTER_CENTER,
         label,
         font(11.5),
+        TEXT,
+    );
+
+    response.on_hover_cursor(CursorIcon::PointingHand)
+}
+
+pub fn secondary_button_icon(ui: &mut Ui, label: &str, icon: &str) -> Response {
+    let width = 160.0_f32.min(ui.available_width());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 38.0), Sense::click());
+    let fill = if response.hovered() {
+        SURFACE_3
+    } else {
+        SURFACE_2
+    };
+
+    ui.painter().rect_filled(rect, CornerRadius::same(9), fill);
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        format!("{icon}  {label}"),
+        font_semibold(12.0),
         TEXT,
     );
 

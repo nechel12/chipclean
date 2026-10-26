@@ -41,6 +41,11 @@ pub enum ScanEvent {
     },
 }
 
+pub(crate) struct WalkStats {
+    pub errors: u64,
+    pub cancelled: bool,
+}
+
 pub fn spawn(
     categories: Vec<CleanupCategory>,
     downloads_days: u32,
@@ -112,12 +117,8 @@ fn scan_category(
     let mut outcome = ScanOutcome::default();
 
     for target in &category.targets {
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
-
-        match target {
-            ScanTarget::RecycleBin => match crate::win::recycle_bin::query() {
+        if let ScanTarget::RecycleBin = target {
+            match crate::win::recycle_bin::query() {
                 Ok(info) => {
                     outcome.bytes += info.bytes;
                     outcome.files += info.items;
@@ -126,76 +127,99 @@ fn scan_category(
                     tracing::debug!(%err, "recycle bin query failed");
                     outcome.errors += 1;
                 }
-            },
-            ScanTarget::Path {
-                source,
-                min_age_days,
-                max_depth,
-            } => {
-                let days = if category.id == CategoryId::Downloads {
-                    downloads_days
-                } else {
-                    *min_age_days
-                };
-
-                for root in source.resolve() {
-                    scan_path(&root, *max_depth, days, &mut outcome, cancel);
-                    if cancel.load(Ordering::Relaxed) {
-                        break;
-                    }
-                }
             }
         }
     }
+
+    let stats = walk_category_files(category, downloads_days, cancel, |_, metadata| {
+        outcome.bytes = outcome.bytes.saturating_add(metadata.len());
+        outcome.files = outcome.files.saturating_add(1);
+    });
+    outcome.errors = outcome.errors.saturating_add(stats.errors);
 
     outcome
 }
 
-fn scan_path(
-    root: &Path,
-    max_depth: usize,
-    min_age_days: u32,
-    outcome: &mut ScanOutcome,
+pub(crate) fn walk_category_files(
+    category: &CleanupCategory,
+    downloads_days: u32,
     cancel: &AtomicBool,
-) {
-    let mut walker = WalkDir::new(root).follow_links(false);
-    if max_depth > 0 {
-        walker = walker.max_depth(max_depth);
-    }
+    mut visit: impl FnMut(&Path, &std::fs::Metadata),
+) -> WalkStats {
+    let mut stats = WalkStats {
+        errors: 0,
+        cancelled: false,
+    };
 
-    for (index, entry) in walker.into_iter().filter_entry(should_visit).enumerate() {
-        if index % 256 == 0 && cancel.load(Ordering::Relaxed) {
+    'targets: for target in &category.targets {
+        let ScanTarget::Path {
+            source,
+            min_age_days,
+            max_depth,
+        } = target
+        else {
+            continue;
+        };
+
+        if cancel.load(Ordering::Relaxed) {
+            stats.cancelled = true;
             break;
         }
 
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(err) => {
-                tracing::trace!(path = %root.display(), %err, "walk error");
-                outcome.errors += 1;
-                continue;
-            }
+        let days = if category.id == CategoryId::Downloads {
+            downloads_days
+        } else {
+            *min_age_days
         };
 
-        if !entry.file_type().is_file() || entry.file_type().is_symlink() {
-            continue;
-        }
-
-        let metadata = match entry.metadata() {
-            Ok(metadata) => metadata,
-            Err(_) => {
-                outcome.errors += 1;
-                continue;
+        for root in source.resolve() {
+            let mut walker = WalkDir::new(&root).follow_links(false);
+            if *max_depth > 0 {
+                walker = walker.max_depth(*max_depth);
             }
-        };
 
-        if min_age_days > 0 && !is_older_than(metadata.modified().ok(), min_age_days) {
-            continue;
+            for (index, entry) in walker.into_iter().filter_entry(should_visit).enumerate() {
+                if index % 256 == 0 && cancel.load(Ordering::Relaxed) {
+                    stats.cancelled = true;
+                    break 'targets;
+                }
+
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        tracing::trace!(path = %root.display(), %err, "walk error");
+                        stats.errors += 1;
+                        continue;
+                    }
+                };
+
+                if !entry.file_type().is_file() || entry.file_type().is_symlink() {
+                    continue;
+                }
+
+                let metadata = match entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(_) => {
+                        stats.errors += 1;
+                        continue;
+                    }
+                };
+
+                if days > 0 && !is_older_than(metadata.modified().ok(), days) {
+                    continue;
+                }
+
+                visit(entry.path(), &metadata);
+            }
+
+            if cancel.load(Ordering::Relaxed) {
+                stats.cancelled = true;
+                break 'targets;
+            }
         }
-
-        outcome.bytes = outcome.bytes.saturating_add(metadata.len());
-        outcome.files = outcome.files.saturating_add(1);
     }
+
+    stats
 }
 
 fn should_visit(entry: &walkdir::DirEntry) -> bool {

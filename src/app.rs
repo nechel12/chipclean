@@ -38,9 +38,7 @@ impl Page {
 
     pub fn subtitle(self) -> &'static str {
         match self {
-            Self::Cleanup => {
-                "Выберите разделы и запустите безопасное сканирование. Удаление появится после проверки правил."
-            }
+            Self::Cleanup => "Сканирование, предпросмотр и безопасное удаление с подтверждением.",
             Self::Registry => {
                 "Поиск неверных записей с резервным копированием ключей перед любыми изменениями."
             }
@@ -132,8 +130,9 @@ impl ChipCleanApp {
 impl eframe::App for ChipCleanApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cleanup.poll();
+        self.cleanup.poll_clean();
 
-        if self.cleanup.is_scanning() {
+        if self.cleanup.is_scanning() || self.cleanup.is_cleaning() {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
     }

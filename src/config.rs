@@ -51,13 +51,17 @@ pub fn settings_path() -> PathBuf {
     config_dir().join("settings.json")
 }
 
+pub fn journal_path() -> PathBuf {
+    log_dir().join("operations.jsonl")
+}
+
 pub fn load() -> Settings {
     let path = settings_path();
     let Ok(raw) = fs::read_to_string(&path) else {
         return Settings::default();
     };
 
-    serde_json::from_str::<Settings>(&raw)
+    serde_json::from_str::<Settings>(raw.trim_start_matches('\u{feff}'))
         .map(Settings::normalized)
         .unwrap_or_else(|err| {
             tracing::warn!(%err, path = %path.display(), "failed to parse settings");

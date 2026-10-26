@@ -41,9 +41,9 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             &mut columns[0],
             "Гарантии безопасности",
             |ui| {
-                rule_row(ui, "Загрузки: отдельное подтверждение");
-                rule_row(ui, "Корзина: отдельное подтверждение");
-                rule_row(ui, "Реестр: .reg-бэкап перед правкой");
+                rule_row(ui, "Удаление: только после предпросмотра");
+                rule_row(ui, "Загрузки: отдельный шаг подтверждения");
+                rule_row(ui, "Корзина: отдельный шаг подтверждения");
                 rule_row(ui, "Все операции пишутся в журнал");
             },
         );
@@ -59,6 +59,17 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             ui.label(RichText::new("Журналы").font(font(9.5)).color(TEXT_DIM));
             ui.label(
                 RichText::new(config::log_dir().display().to_string())
+                    .font(font(9.0))
+                    .color(TEXT_MUTED),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Журнал операций")
+                    .font(font(9.5))
+                    .color(TEXT_DIM),
+            );
+            ui.label(
+                RichText::new(config::journal_path().display().to_string())
                     .font(font(9.0))
                     .color(TEXT_MUTED),
             );
@@ -81,7 +92,7 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             );
             ui.add_space(2.0);
             ui.label(
-                RichText::new("Каркас интерфейса и безопасного сканера")
+                RichText::new("Сканер и безопасная очистка")
                     .font(font(10.0))
                     .color(TEXT_MUTED),
             );

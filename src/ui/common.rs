@@ -21,7 +21,7 @@ pub fn page_header(ui: &mut Ui, page: Page) {
             );
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            widgets::badge(ui, "0.1.0 · каркас", TEXT_DIM);
+            widgets::badge(ui, "0.1.0 · beta", TEXT_DIM);
         });
     });
 

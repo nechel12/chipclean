@@ -22,6 +22,31 @@ pub enum CategoryId {
     Downloads,
 }
 
+impl CategoryId {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::TempUser => "temp_user",
+            Self::TempWindows => "temp_windows",
+            Self::Thumbnails => "thumbnails",
+            Self::WerReports => "wer_reports",
+            Self::CrashDumps => "crash_dumps",
+            Self::CbsLogs => "cbs_logs",
+            Self::UpdateLogs => "update_logs",
+            Self::DeliveryOptimization => "delivery_optimization",
+            Self::UpdateCache => "update_cache",
+            Self::WindowsOld => "windows_old",
+            Self::EdgeCache => "edge_cache",
+            Self::ChromeCache => "chrome_cache",
+            Self::FirefoxCache => "firefox_cache",
+            Self::NvidiaDx => "nvidia_dx",
+            Self::NvidiaGl => "nvidia_gl",
+            Self::DirectXShader => "directx_shader",
+            Self::RecycleBin => "recycle_bin",
+            Self::Downloads => "downloads",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     System,
@@ -96,6 +121,8 @@ pub enum PathSource {
     },
     UserTemp,
     DownloadFolder,
+    #[cfg(test)]
+    Literal(PathBuf),
 }
 
 impl PathSource {
@@ -111,6 +138,8 @@ impl PathSource {
             Self::SystemDrive { sub } => Some(join_sub(system_drive(), sub)),
             Self::UserTemp => Some(std::env::temp_dir()),
             Self::DownloadFolder => crate::win::paths::downloads(),
+            #[cfg(test)]
+            Self::Literal(path) => Some(path.clone()),
         };
 
         path.map(expand_path).unwrap_or_default()
