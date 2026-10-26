@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+*.ilk
+
+# Build artifacts
+/dist/
+/release/
+*.msi
+*.msix
+*.zip
+*.7z
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local config / secrets
+.env
+.env.*
+*.local
+/secrets/
+
+# Logs / runtime data
+*.log
+/backups/
+.crashdumps/
