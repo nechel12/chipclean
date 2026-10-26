@@ -1,0 +1,9 @@
+pub mod cleanup;
+pub mod common;
+pub mod format;
+pub mod registry;
+pub mod settings;
+pub mod sidebar;
+pub mod startup;
+pub mod uninstall;
+pub mod widgets;
