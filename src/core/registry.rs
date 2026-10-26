@@ -93,14 +93,14 @@ impl RegistryHive {
         }
     }
 
-    fn reg_name(self) -> &'static str {
+    pub(crate) fn reg_name(self) -> &'static str {
         match self {
             Self::CurrentUser => "HKEY_CURRENT_USER",
             Self::LocalMachine => "HKEY_LOCAL_MACHINE",
         }
     }
 
-    fn root(self) -> &'static Key {
+    pub(crate) fn root(self) -> &'static Key {
         match self {
             Self::CurrentUser => CURRENT_USER,
             Self::LocalMachine => LOCAL_MACHINE,
@@ -225,7 +225,7 @@ fn scan_category(id: RegistryCategoryId, cancel: &AtomicBool) -> Result<Vec<Regi
     }
 }
 
-const STARTUP_KEYS: &[(RegistryHive, &str)] = &[
+pub(crate) const STARTUP_KEYS: &[(RegistryHive, &str)] = &[
     (
         RegistryHive::CurrentUser,
         r"Software\Microsoft\Windows\CurrentVersion\Run",
@@ -729,27 +729,7 @@ fn create_backup(findings: &[RegistryFinding], base: &Path) -> Result<RegistryBa
             exported.len() + 1,
             sanitize_filename(&key_path)
         );
-        let path = dir.join(filename);
-        let output = Command::new(reg_exe())
-            .creation_flags(CREATE_NO_WINDOW)
-            .arg("export")
-            .arg(&full)
-            .arg(&path)
-            .arg("/y")
-            .output()
-            .with_context(|| format!("не удалось запустить reg.exe для {full}"))?;
-
-        if !output.status.success() {
-            bail!(
-                "reg.exe export завершился с кодом {} для {full}: {}",
-                output.status,
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        if !path.is_file() {
-            bail!("reg.exe не создал файл {}", path.display());
-        }
-
+        let path = export_key_to(hive, &key_path, &dir, filename)?;
         exported.insert(full, path);
     }
 
@@ -757,6 +737,54 @@ fn create_backup(findings: &[RegistryFinding], base: &Path) -> Result<RegistryBa
         dir,
         files: exported.into_values().collect(),
     })
+}
+
+pub(crate) fn export_registry_key(
+    hive: RegistryHive,
+    key_path: &str,
+    base_dir: &Path,
+    tag: &str,
+) -> Result<PathBuf> {
+    let dir = base_dir.join(format!("{tag}-{}", Utc::now().format("%Y%m%d-%H%M%S-%3f")));
+    fs::create_dir_all(&dir).with_context(|| format!("не удалось создать {}", dir.display()))?;
+
+    let filename = format!(
+        "{}-{}.reg",
+        sanitize_filename(tag),
+        sanitize_filename(key_path)
+    );
+    export_key_to(hive, key_path, &dir, filename)
+}
+
+fn export_key_to(
+    hive: RegistryHive,
+    key_path: &str,
+    dir: &Path,
+    filename: String,
+) -> Result<PathBuf> {
+    let full = format!("{}\\{}", hive.reg_name(), key_path);
+    let path = dir.join(filename);
+    let output = Command::new(reg_exe())
+        .creation_flags(CREATE_NO_WINDOW)
+        .arg("export")
+        .arg(&full)
+        .arg(&path)
+        .arg("/y")
+        .output()
+        .with_context(|| format!("не удалось запустить reg.exe для {full}"))?;
+
+    if !output.status.success() {
+        bail!(
+            "reg.exe export завершился с кодом {} для {full}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    if !path.is_file() {
+        bail!("reg.exe не создал файл {}", path.display());
+    }
+
+    Ok(path)
 }
 
 fn delete_finding(finding: &RegistryFinding) -> Result<()> {
@@ -887,6 +915,8 @@ mod tests {
         assert!(reopened.get_string("RemoveMe").is_err());
         assert_eq!(reopened.get_string("KeepMe").unwrap(), "stay");
 
+        drop(reopened);
+        drop(key);
         let _ = CURRENT_USER.remove_tree(&test_path);
     }
 
@@ -918,6 +948,7 @@ mod tests {
             r"C:\Windows\System32\notepad.exe"
         );
 
+        drop(key);
         let _ = CURRENT_USER.remove_tree(&test_path);
     }
 }

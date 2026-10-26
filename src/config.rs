@@ -59,6 +59,14 @@ pub fn backups_dir() -> PathBuf {
     log_dir().join("backups")
 }
 
+pub fn startup_store_path() -> PathBuf {
+    log_dir().join("disabled-startup.json")
+}
+
+pub fn startup_quarantine_dir() -> PathBuf {
+    log_dir().join("startup-disabled")
+}
+
 pub fn load() -> Settings {
     let path = settings_path();
     let Ok(raw) = fs::read_to_string(&path) else {

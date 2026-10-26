@@ -5,4 +5,6 @@ pub mod model;
 pub mod registry;
 pub mod registry_state;
 pub mod scanner;
+pub mod startup;
+pub mod startup_state;
 pub mod state;
