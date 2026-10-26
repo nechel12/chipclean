@@ -22,13 +22,21 @@ pub fn bytes(bytes: u64) -> String {
 }
 
 pub fn files(count: u64) -> String {
+    plural(count, "файл", "файла", "файлов")
+}
+
+pub fn records(count: u64) -> String {
+    plural(count, "запись", "записи", "записей")
+}
+
+fn plural(count: u64, one: &str, few: &str, many: &str) -> String {
     let word = if (11..=14).contains(&(count % 100)) {
-        "файлов"
+        many
     } else {
         match count % 10 {
-            1 => "файл",
-            2..=4 => "файла",
-            _ => "файлов",
+            1 => one,
+            2..=4 => few,
+            _ => many,
         }
     };
 
@@ -56,6 +64,16 @@ mod tests {
         assert_eq!(files(11), "11 файлов");
         assert_eq!(files(21), "21 файл");
         assert_eq!(files(111), "111 файлов");
+    }
+
+    #[test]
+    fn record_word_forms() {
+        assert_eq!(records(0), "0 записей");
+        assert_eq!(records(1), "1 запись");
+        assert_eq!(records(2), "2 записи");
+        assert_eq!(records(5), "5 записей");
+        assert_eq!(records(11), "11 записей");
+        assert_eq!(records(21), "21 запись");
     }
 
     #[test]

@@ -233,7 +233,13 @@ impl CleanupState {
         if self.is_scanning() || self.is_cleaning() {
             return false;
         }
-        if !matches!(self.scan, ScanState::Done { .. }) {
+        if !matches!(
+            self.scan,
+            ScanState::Done {
+                cancelled: false,
+                ..
+            }
+        ) {
             return false;
         }
         if self.selected.is_empty() {

@@ -1,6 +1,6 @@
 use egui::{
     Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Margin, Rect, Response,
-    RichText, Sense, Stroke, Ui, Vec2,
+    RichText, Sense, Ui, Vec2,
 };
 use egui_phosphor::regular as ph;
 
@@ -169,6 +169,78 @@ fn draw_checkbox(ui: &mut Ui, center: egui::Pos2, checked: bool, muted: bool) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn selectable_row(
+    ui: &mut Ui,
+    icon: &str,
+    title: &str,
+    summary: &str,
+    checked: bool,
+    enabled: bool,
+    accent: Color32,
+    right_text: Option<&str>,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), 54.0),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+
+    if response.hovered() && enabled {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(9), SURFACE_2);
+    }
+
+    draw_checkbox(
+        ui,
+        rect.left_center() + Vec2::new(20.0, 0.0),
+        checked,
+        !enabled,
+    );
+    ui.painter().text(
+        rect.left_center() + Vec2::new(46.0, 0.0),
+        Align2::LEFT_CENTER,
+        icon,
+        FontId::new(19.0, FontFamily::Proportional),
+        accent,
+    );
+    ui.painter().text(
+        rect.left_center() + Vec2::new(72.0, -9.0),
+        Align2::LEFT_CENTER,
+        title,
+        font_semibold(12.0),
+        TEXT,
+    );
+    ui.painter().text(
+        rect.left_center() + Vec2::new(72.0, 9.0),
+        Align2::LEFT_CENTER,
+        summary,
+        font(10.0),
+        TEXT_DIM,
+    );
+
+    if let Some(right_text) = right_text {
+        ui.painter().text(
+            egui::pos2(rect.right() - 12.0, rect.center().y),
+            Align2::RIGHT_CENTER,
+            right_text,
+            font_semibold(10.5),
+            TEXT_MUTED,
+        );
+    }
+
+    let response = response.on_hover_text(format!("{title}\n{summary}"));
+
+    if enabled {
+        response.on_hover_cursor(CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+
 pub fn confirmation_checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> bool {
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
@@ -197,27 +269,6 @@ pub fn confirmation_checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> bo
         true
     } else {
         false
-    }
-}
-
-pub fn static_checkbox(ui: &mut Ui, checked: bool, muted: bool) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());
-    let outer = if muted { BORDER } else { ACCENT };
-
-    if checked {
-        ui.painter().rect_filled(rect, CornerRadius::same(5), outer);
-        ui.painter().text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            ph::CHECK,
-            FontId::new(11.0, FontFamily::Proportional),
-            Color32::WHITE,
-        );
-    } else {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(5), BORDER);
-        ui.painter()
-            .rect_filled(rect.shrink(1.0), CornerRadius::same(4), BG);
     }
 }
 
@@ -373,31 +424,6 @@ pub fn inline_hint(ui: &mut Ui, icon: &str, text: &str, color: Color32) {
         );
         ui.label(RichText::new(text).font(font(10.5)).color(color));
     });
-}
-
-pub fn planned_row(ui: &mut Ui, icon: &str, title: &str, summary: &str, risk: Risk) {
-    Frame::new()
-        .fill(SURFACE)
-        .stroke(Stroke::new(1.0, BORDER))
-        .corner_radius(CornerRadius::same(10))
-        .inner_margin(Margin::same(12))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                static_checkbox(ui, false, true);
-                ui.label(
-                    RichText::new(icon)
-                        .font(FontId::new(17.0, FontFamily::Proportional))
-                        .color(TEXT_DIM),
-                );
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(title).font(font_semibold(11.5)).color(TEXT));
-                    ui.label(RichText::new(summary).font(font(9.5)).color(TEXT_DIM));
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    badge(ui, risk_label(risk), risk_color(risk));
-                });
-            });
-        });
 }
 
 pub fn group_color(group: Group) -> Color32 {

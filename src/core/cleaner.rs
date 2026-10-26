@@ -278,6 +278,12 @@ fn safe_delete_file(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::core::model::{Group, PathSource, Risk};
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::UI::Shell::{
+        FO_DELETE, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_NOERRORUI, FOF_SILENT, SHFILEOPSTRUCTW,
+        SHFileOperationW,
+    };
+    use windows::core::PCWSTR;
 
     #[test]
     fn deletes_regular_files_and_refuses_directories() {
@@ -347,5 +353,82 @@ mod tests {
 
         let journal = std::fs::read_to_string(journal_path).unwrap();
         assert_eq!(journal.lines().count(), 2);
+    }
+
+    #[test]
+    #[ignore = "destructive: empties the entire Recycle Bin; requires CHIPCLEAN_TEST_RECYCLE_BIN=1"]
+    fn cleans_recycle_bin_end_to_end() {
+        if std::env::var_os("CHIPCLEAN_TEST_RECYCLE_BIN").is_none() {
+            eprintln!("CHIPCLEAN_TEST_RECYCLE_BIN is not set; skipping destructive test");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("chipclean-recycle-bin-test.txt");
+        std::fs::write(&file, b"recycle bin deletion test").unwrap();
+        assert!(
+            send_to_recycle_bin(&file),
+            "failed to send test file to the Recycle Bin"
+        );
+        assert!(!file.exists());
+
+        let before = crate::win::recycle_bin::query().unwrap();
+        assert!(
+            before.items >= 1,
+            "test file did not appear in the Recycle Bin"
+        );
+
+        let category = crate::core::catalog::catalog()
+            .into_iter()
+            .find(|category| category.id == CategoryId::RecycleBin)
+            .unwrap();
+
+        let cancel = AtomicBool::new(false);
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let journal_dir = tempfile::tempdir().unwrap();
+        let journal_path = journal_dir.path().join("journal.jsonl");
+        let mut journal = Journal::open_at(journal_path.clone()).unwrap();
+        let mut last_emit = Instant::now();
+        let mut fatal = None;
+
+        let outcome = clean_category(
+            &category,
+            7,
+            &cancel,
+            &mut journal,
+            &tx,
+            1,
+            0,
+            CleanOutcome::default(),
+            &mut last_emit,
+            &mut fatal,
+        );
+        journal.flush().unwrap();
+
+        assert!(fatal.is_none());
+        assert!(outcome.files >= 1);
+        assert!(outcome.bytes > 0);
+
+        let after = crate::win::recycle_bin::query().unwrap_or_default();
+        assert_eq!(after.items, 0, "Recycle Bin should be empty");
+
+        let journal = std::fs::read_to_string(journal_path).unwrap();
+        assert!(journal.contains("\"event\":\"empty_recycle_bin\""));
+    }
+
+    fn send_to_recycle_bin(path: &Path) -> bool {
+        let mut from: Vec<u16> = path.as_os_str().encode_wide().collect();
+        from.extend([0, 0]);
+
+        let mut operation = SHFILEOPSTRUCTW {
+            wFunc: FO_DELETE,
+            pFrom: PCWSTR(from.as_ptr()),
+            fFlags: (FOF_ALLOWUNDO.0 | FOF_NOCONFIRMATION.0 | FOF_SILENT.0 | FOF_NOERRORUI.0)
+                as u16,
+            ..Default::default()
+        };
+
+        let result = unsafe { SHFileOperationW(&mut operation) };
+        result == 0 && !operation.fAnyOperationsAborted.as_bool()
     }
 }

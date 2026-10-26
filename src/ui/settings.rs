@@ -73,6 +73,17 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
                     .font(font(9.0))
                     .color(TEXT_MUTED),
             );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Бэкапы реестра")
+                    .font(font(9.5))
+                    .color(TEXT_DIM),
+            );
+            ui.label(
+                RichText::new(config::backups_dir().display().to_string())
+                    .font(font(9.0))
+                    .color(TEXT_MUTED),
+            );
             ui.add_space(10.0);
 
             if widgets::secondary_button(ui, "Открыть настройки").clicked() {
@@ -81,6 +92,10 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             ui.add_space(6.0);
             if widgets::secondary_button(ui, "Открыть логи").clicked() {
                 open_dir(&config::log_dir());
+            }
+            ui.add_space(6.0);
+            if widgets::secondary_button(ui, "Открыть бэкапы").clicked() {
+                open_dir(&config::backups_dir());
             }
         });
 

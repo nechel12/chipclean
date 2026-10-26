@@ -55,6 +55,10 @@ pub fn journal_path() -> PathBuf {
     log_dir().join("operations.jsonl")
 }
 
+pub fn backups_dir() -> PathBuf {
+    log_dir().join("backups")
+}
+
 pub fn load() -> Settings {
     let path = settings_path();
     let Ok(raw) = fs::read_to_string(&path) else {

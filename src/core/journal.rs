@@ -107,6 +107,10 @@ impl Journal {
         self.flush()
     }
 
+    pub fn record(&mut self, value: serde_json::Value) -> Result<()> {
+        self.write(value)
+    }
+
     pub fn flush(&mut self) -> Result<()> {
         self.writer
             .flush()

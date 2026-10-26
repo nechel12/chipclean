@@ -1,11 +1,10 @@
-use std::time::{Duration, Instant};
-
 use crate::{
     config::{self, Settings},
+    core::registry_state::RegistryState,
     core::state::CleanupState,
     theme, ui, win,
 };
-
+use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Cleanup,
@@ -40,7 +39,7 @@ impl Page {
         match self {
             Self::Cleanup => "Сканирование, предпросмотр и безопасное удаление с подтверждением.",
             Self::Registry => {
-                "Поиск неверных записей с резервным копированием ключей перед любыми изменениями."
+                "Безопасная проверка реестра и обязательный .reg-бэкап перед изменениями."
             }
             Self::Startup => "Программы, которые запускаются вместе с Windows, и управление ими.",
             Self::Programs => {
@@ -61,6 +60,7 @@ pub struct ChipCleanApp {
     pub page: Page,
     pub settings: Settings,
     pub cleanup: CleanupState,
+    pub registry: RegistryState,
     pub disk: Option<win::disk::DiskSpace>,
     pub elevated: bool,
     toast: Option<Toast>,
@@ -72,11 +72,13 @@ impl ChipCleanApp {
 
         let settings = config::load();
         let cleanup = CleanupState::new(&settings);
+        let registry = RegistryState::new();
 
         Self {
             page: Page::Cleanup,
             settings,
             cleanup,
+            registry,
             disk: win::disk::system_drive_space().ok(),
             elevated: win::elevation::is_elevated(),
             toast: None,
@@ -131,8 +133,14 @@ impl eframe::App for ChipCleanApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.cleanup.poll();
         self.cleanup.poll_clean();
+        self.registry.poll_scan();
+        self.registry.poll_clean();
 
-        if self.cleanup.is_scanning() || self.cleanup.is_cleaning() {
+        if self.cleanup.is_scanning()
+            || self.cleanup.is_cleaning()
+            || self.registry.is_scanning()
+            || self.registry.is_cleaning()
+        {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
     }
@@ -150,7 +158,7 @@ impl eframe::App for ChipCleanApp {
             )
             .show(ui, |ui| match self.page {
                 Page::Cleanup => ui::cleanup::show(ui, &mut self.cleanup, &mut self.settings),
-                Page::Registry => ui::registry::show(ui),
+                Page::Registry => ui::registry::show(ui, &mut self.registry),
                 Page::Startup => ui::startup::show(ui),
                 Page::Programs => ui::uninstall::show(ui),
                 Page::Settings => ui::settings::show(ui, &mut self.settings),
