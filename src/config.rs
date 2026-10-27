@@ -8,6 +8,8 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
+use crate::core::fs_atomic;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -105,10 +107,7 @@ pub fn save(settings: &Settings) -> Result<()> {
     let dir = config_dir();
     fs::create_dir_all(&dir)
         .with_context(|| format!("не удалось создать каталог {}", dir.display()))?;
-    let path = settings_path();
-    let raw = serde_json::to_string_pretty(settings)?;
-    fs::write(&path, raw).with_context(|| format!("не удалось записать {}", path.display()))?;
-    Ok(())
+    fs_atomic::write_json_atomic(&settings_path(), settings)
 }
 
 pub fn open_dir(path: &Path) -> Result<()> {

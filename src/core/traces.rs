@@ -28,7 +28,7 @@ use windows::core::{Interface, PCWSTR};
 use crate::{
     config,
     core::{
-        fs_move,
+        fs_atomic, fs_move,
         journal::Journal,
         model::Risk,
         path_guard,
@@ -970,12 +970,7 @@ fn load_store(path: &Path) -> Result<TraceStore> {
 }
 
 fn save_store(path: &Path, store: &TraceStore) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("не удалось создать {}", parent.display()))?;
-    }
-    let raw = serde_json::to_string_pretty(store)?;
-    fs::write(path, raw).with_context(|| format!("не удалось записать {}", path.display()))
+    fs_atomic::write_json_atomic(path, store)
 }
 
 fn unique_quarantine_path(dir: &Path, original: &Path) -> PathBuf {

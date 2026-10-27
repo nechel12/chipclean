@@ -21,7 +21,10 @@ use windows::{
     core::{BOOL, HRESULT, PCWSTR, PWSTR},
 };
 
-use crate::{config, core::journal::Journal};
+use crate::{
+    config,
+    core::{fs_atomic, journal::Journal},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServiceEntry {
@@ -505,12 +508,7 @@ fn load_store(path: &Path) -> Result<DisabledServiceStore> {
 }
 
 fn save_store(path: &Path, store: &DisabledServiceStore) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("не удалось создать {}", parent.display()))?;
-    }
-    let raw = serde_json::to_string_pretty(store)?;
-    fs::write(path, raw).with_context(|| format!("не удалось записать {}", path.display()))
+    fs_atomic::write_json_atomic(path, store)
 }
 
 struct ScmHandle(SC_HANDLE);

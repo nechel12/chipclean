@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     config,
-    core::registry_editor::{EditorHive, full_path, join_path, list_values, open_key},
+    core::{
+        fs_atomic,
+        registry_editor::{EditorHive, full_path, join_path, list_values, open_key},
+    },
 };
 
 const SNAPSHOT_KEY_LIMIT: usize = 120_000;
@@ -179,8 +182,7 @@ pub fn create_snapshot(name: &str, roots: &[SnapshotRoot]) -> Result<SnapshotMet
     let dir = config::snapshots_dir();
     fs::create_dir_all(&dir).with_context(|| format!("не удалось создать {}", dir.display()))?;
     let path = dir.join(&file);
-    let raw = serde_json::to_vec(&data)?;
-    fs::write(&path, raw).with_context(|| format!("не удалось записать {}", path.display()))?;
+    fs_atomic::write_json_atomic_compact(&path, &data)?;
 
     let meta = SnapshotMeta {
         id,
@@ -390,9 +392,7 @@ fn load_index(path: &Path) -> Result<SnapshotIndex> {
 fn save_index(index: &SnapshotIndex) -> Result<()> {
     let dir = config::snapshots_dir();
     fs::create_dir_all(&dir).with_context(|| format!("не удалось создать {}", dir.display()))?;
-    let path = index_path();
-    fs::write(&path, serde_json::to_vec_pretty(index)?)
-        .with_context(|| format!("не удалось записать {}", path.display()))
+    fs_atomic::write_json_atomic(&index_path(), index)
 }
 
 pub fn snapshot_size(meta: &SnapshotMeta) -> Result<u64> {

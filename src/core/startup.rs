@@ -14,7 +14,7 @@ use windows_registry::Type;
 use crate::{
     config,
     core::{
-        fs_move,
+        fs_atomic, fs_move,
         journal::Journal,
         path_guard,
         registry::{self, RegistryHive, STARTUP_KEYS},
@@ -507,12 +507,7 @@ fn load_store(path: &Path) -> Result<DisabledStore> {
 }
 
 fn save_store(path: &Path, store: &DisabledStore) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("не удалось создать {}", parent.display()))?;
-    }
-    let raw = serde_json::to_string_pretty(store)?;
-    fs::write(path, raw).with_context(|| format!("не удалось записать {}", path.display()))
+    fs_atomic::write_json_atomic(path, store)
 }
 
 fn startup_folders() -> Vec<(StartupSource, PathBuf)> {
