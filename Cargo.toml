@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.95"
 description = "Fast, safe Windows cleaner and registry optimizer"
+license = "Apache-2.0"
 publish = false
 
 [dependencies]
