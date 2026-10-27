@@ -202,20 +202,33 @@ fn parse_reg_key(value: &str) -> Option<RegSpec> {
         return None;
     }
     let mut reg_value = None;
+    let mut recurse = false;
+    let mut remove_self = false;
+    let mut all_values = false;
     for part in parts {
         let part = part.trim();
         let upper = part.to_ascii_uppercase();
-        if matches!(upper.as_str(), "RECURSE" | "REMOVESELF" | "ALL" | "*") {
-            continue;
+        match upper.as_str() {
+            "RECURSE" => recurse = true,
+            "REMOVESELF" => remove_self = true,
+            "ALL" | "*" => all_values = true,
+            "" => {}
+            _ => {
+                if reg_value.is_none() && !all_values {
+                    reg_value = Some(part.to_owned());
+                }
+            }
         }
-        if !part.is_empty() && reg_value.is_none() {
-            reg_value = Some(part.to_owned());
-        }
+    }
+    if remove_self || all_values {
+        reg_value = None;
     }
     Some(RegSpec {
         hive,
         path,
         value: reg_value,
+        recurse,
+        remove_self,
     })
 }
 
@@ -287,5 +300,26 @@ RegKey1=HKCU\Software\ChipCleanTest|Value
         assert_eq!(registry.len(), 1);
         assert_eq!(registry[0].value.as_deref(), Some("Value"));
         assert!(!detected(&sections[0]));
+    }
+
+    #[test]
+    fn parses_registry_flags() {
+        let all = parse_reg_key(r"HKCU\Software\ChipCleanTest|*|RECURSE").unwrap();
+        assert!(all.value.is_none());
+        assert!(all.recurse);
+        assert!(!all.remove_self);
+
+        let tree = parse_reg_key(r"HKLM\Software\ChipCleanTest|REMOVESELF").unwrap();
+        assert!(tree.remove_self);
+        assert!(tree.value.is_none());
+
+        let value = parse_reg_key(r"HKCU\Software\ChipCleanTest|Value|RECURSE").unwrap();
+        assert_eq!(value.value.as_deref(), Some("Value"));
+        assert!(value.recurse);
+        assert!(!value.remove_self);
+
+        let bare = parse_reg_key(r"HKCU\Software\ChipCleanTest").unwrap();
+        assert!(bare.value.is_none());
+        assert!(!bare.remove_self);
     }
 }

@@ -356,7 +356,18 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
 
 fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
     let (files, bytes, registry) = state.selected_stats();
-    let selected = state.selected_targets();
+    let selected: Vec<(DataTarget, Vec<String>, u64)> = state
+        .selected_targets()
+        .into_iter()
+        .map(|target| {
+            let (items, count) = state
+                .scans
+                .get(&target.id)
+                .map(|scan| (scan.registry_items.clone(), scan.registry))
+                .unwrap_or_default();
+            (target, items, count)
+        })
+        .collect();
     let mut action = ModalAction::None;
     let screen = ctx.content_rect();
     egui::Area::new(egui::Id::new("community-confirm-backdrop"))
@@ -429,12 +440,22 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
                         .id_salt("community-confirm-list")
                         .max_height(160.0)
                         .show(ui, |ui| {
-                            for target in selected.iter().take(30) {
+                            for (target, items, count) in selected.iter().take(30) {
                                 ui.label(
                                     RichText::new(&target.title)
                                         .font(font(9.0))
                                         .color(TEXT_MUTED),
                                 );
+                                for item in items.iter().take(8) {
+                                    ui.label(RichText::new(item).font(font(7.5)).color(TEXT_DIM));
+                                }
+                                if *count > 8 {
+                                    ui.label(
+                                        RichText::new(format!("… ещё {}", count - 8))
+                                            .font(font(7.5))
+                                            .color(TEXT_DIM),
+                                    );
+                                }
                             }
                         });
                 });

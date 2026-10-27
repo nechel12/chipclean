@@ -176,6 +176,13 @@ pub fn delete_value(
     Ok(backup)
 }
 
+pub(crate) fn remove_value_raw(hive: EditorHive, path: &str, name: &str) -> Result<()> {
+    let key = open_key_rw(hive, path)?;
+    key.remove_value(name)
+        .with_context(|| format!("не удалось удалить значение {}", display_value_name(name)))?;
+    Ok(())
+}
+
 pub fn create_key(hive: EditorHive, parent_path: &str, name: &str) -> Result<()> {
     let name = name.trim();
     if name.is_empty() || name.contains('\\') {

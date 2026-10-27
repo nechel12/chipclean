@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     time::Duration,
@@ -9,12 +9,13 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::json;
 use walkdir::WalkDir;
+use windows_registry::Key;
 
 use crate::{
     config,
     core::{
         journal::Journal,
-        registry_editor::{self, EditorHive, join_path},
+        registry_editor::{self, EditorHive, full_path, join_path},
     },
 };
 
@@ -34,6 +35,8 @@ pub struct RegSpec {
     pub hive: EditorHive,
     pub path: String,
     pub value: Option<String>,
+    pub recurse: bool,
+    pub remove_self: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +60,7 @@ pub struct TargetScan {
     pub bytes: u64,
     pub history: u64,
     pub registry: u64,
+    pub registry_items: Vec<String>,
     pub errors: u64,
 }
 
@@ -269,7 +273,12 @@ pub fn scan_target(target: &DataTarget) -> TargetScan {
     }
     for spec in &target.registry {
         match scan_registry(spec, &target.exclude_registry) {
-            Ok(count) => scan.registry += count,
+            Ok((count, items)) => {
+                scan.registry += count;
+                let remaining = REGISTRY_PREVIEW_LIMIT.saturating_sub(scan.registry_items.len());
+                scan.registry_items
+                    .extend(items.into_iter().take(remaining));
+            }
             Err(_) => scan.errors += 1,
         }
     }
@@ -315,13 +324,9 @@ pub fn clean_target(target: &DataTarget) -> CleanReport {
     }
 
     for spec in &target.registry {
-        if is_excluded_registry(spec, &target.exclude_registry) {
-            continue;
-        }
-        match clean_registry(spec) {
-            Ok(()) => report.registry += 1,
-            Err(err) => report.errors.push(format!("{}: {err}", spec.path)),
-        }
+        let (deleted, errors) = clean_registry(spec, &target.exclude_registry);
+        report.registry += deleted;
+        report.errors.extend(errors);
     }
 
     journal(json!({
@@ -454,55 +459,199 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     Ok(count > 0)
 }
 
-fn scan_registry(spec: &RegSpec, excludes: &[String]) -> Result<u64> {
-    if is_excluded_registry(spec, excludes) {
-        return Ok(0);
-    }
-    if let Some(value) = &spec.value {
-        let Ok(key) = registry_editor::open_key(spec.hive, &spec.path) else {
-            return Ok(0);
-        };
-        return Ok(u64::from(key.get_value(value).is_ok()));
+const MAX_REGISTRY_KEYS: usize = 20_000;
+const MAX_REGISTRY_OBJECTS: usize = 50_000;
+const REGISTRY_PREVIEW_LIMIT: usize = 200;
+
+#[derive(Default)]
+struct RegistryPreview {
+    count: u64,
+    items: Vec<String>,
+}
+
+impl RegistryPreview {
+    fn add(&mut self, item: String) {
+        if self.is_full() {
+            return;
+        }
+        self.count += 1;
+        if self.items.len() < REGISTRY_PREVIEW_LIMIT {
+            self.items.push(item);
+        }
     }
 
-    let mut queue = vec![spec.path.clone()];
-    let mut count = 0_u64;
-    while let Some(path) = queue.pop() {
-        if count > 10_000 {
-            break;
+    fn is_full(&self) -> bool {
+        self.count >= MAX_REGISTRY_OBJECTS as u64
+    }
+}
+
+fn scan_registry(spec: &RegSpec, excludes: &[String]) -> Result<(u64, Vec<String>)> {
+    if is_excluded_registry(spec, excludes) {
+        return Ok((0, Vec::new()));
+    }
+    let mut preview = RegistryPreview::default();
+    if spec.remove_self {
+        if has_excluded_descendant(spec.hive, &spec.path, excludes) {
+            return Ok((0, Vec::new()));
         }
-        let Ok(key) = registry_editor::open_key(spec.hive, &path) else {
-            continue;
-        };
-        count += key.values().map(|values| values.count()).unwrap_or(0) as u64;
-        if let Ok(keys) = key.keys() {
-            for child in keys {
-                queue.push(join_path(&path, &child));
+        for (path, key) in collect_registry_keys(spec.hive, &spec.path, true, excludes) {
+            if preview.is_full() {
+                break;
+            }
+            preview.add(format!("{} (раздел)", full_path(spec.hive, &path)));
+            add_key_values(&mut preview, spec.hive, &path, &key);
+        }
+    } else {
+        for (path, key) in collect_registry_keys(spec.hive, &spec.path, spec.recurse, excludes) {
+            if preview.is_full() {
+                break;
+            }
+            if let Some(value) = &spec.value {
+                if key.get_value(value).is_ok() {
+                    preview.add(registry_value_path(spec.hive, &path, value));
+                }
+            } else {
+                add_key_values(&mut preview, spec.hive, &path, &key);
             }
         }
     }
-    Ok(count)
+    Ok((preview.count, preview.items))
 }
 
-fn clean_registry(spec: &RegSpec) -> Result<()> {
+fn clean_registry(spec: &RegSpec, excludes: &[String]) -> (u64, Vec<String>) {
     if !matches!(spec.hive, EditorHive::Hkcu | EditorHive::Hklm) {
-        anyhow::bail!("очистка поддерживается только для HKCU и HKLM");
+        return (
+            0,
+            vec!["очистка поддерживается только для HKCU и HKLM".to_owned()],
+        );
     }
-    if let Some(value) = &spec.value {
-        let Ok(key) = registry_editor::open_key(spec.hive, &spec.path) else {
-            return Ok(());
-        };
-        if key.get_value(value).is_err() {
-            return Ok(());
+    if is_excluded_registry(spec, excludes) {
+        return (0, Vec::new());
+    }
+    if spec.remove_self {
+        if has_excluded_descendant(spec.hive, &spec.path, excludes) {
+            return (
+                0,
+                vec![format!(
+                    "{}: раздел не удалён, потому что содержит исключённые подключи",
+                    full_path(spec.hive, &spec.path)
+                )],
+            );
         }
-        registry_editor::delete_value(spec.hive, &spec.path, value, &config::backups_dir())?;
-    } else {
+        let count = scan_registry(spec, excludes)
+            .map(|(count, _)| count)
+            .unwrap_or(0);
         if registry_editor::open_key(spec.hive, &spec.path).is_err() {
-            return Ok(());
+            return (0, Vec::new());
         }
-        registry_editor::delete_key(spec.hive, &spec.path, &config::backups_dir())?;
+        return match registry_editor::delete_key(spec.hive, &spec.path, &config::backups_dir()) {
+            Ok(_) => (count, Vec::new()),
+            Err(err) => (0, vec![format!("{}: {err}", spec.path)]),
+        };
     }
-    Ok(())
+
+    let items = collect_value_deletions(spec, excludes);
+    if items.is_empty() {
+        return (0, Vec::new());
+    }
+    if let Err(err) = registry_editor::backup_key_to(spec.hive, &spec.path, &config::backups_dir())
+    {
+        return (0, vec![format!("{}: {err}", spec.path)]);
+    }
+
+    let mut deleted = 0;
+    let mut errors = Vec::new();
+    for (path, name) in items {
+        match registry_editor::remove_value_raw(spec.hive, &path, &name) {
+            Ok(()) => deleted += 1,
+            Err(err) => errors.push(format!(
+                "{}: {err}",
+                registry_value_path(spec.hive, &path, &name)
+            )),
+        }
+    }
+    (deleted, errors)
+}
+
+fn collect_value_deletions(spec: &RegSpec, excludes: &[String]) -> Vec<(String, String)> {
+    let mut items = Vec::new();
+    for (path, key) in collect_registry_keys(spec.hive, &spec.path, spec.recurse, excludes) {
+        if items.len() >= MAX_REGISTRY_OBJECTS {
+            break;
+        }
+        if let Some(value) = &spec.value {
+            if key.get_value(value).is_ok() {
+                items.push((path, value.clone()));
+            }
+        } else if let Ok(values) = key.values() {
+            for (name, _) in values {
+                if items.len() >= MAX_REGISTRY_OBJECTS {
+                    break;
+                }
+                items.push((path.clone(), name));
+            }
+        }
+    }
+    items
+}
+
+fn collect_registry_keys(
+    hive: EditorHive,
+    root: &str,
+    recurse: bool,
+    excludes: &[String],
+) -> Vec<(String, Key)> {
+    let mut keys = Vec::new();
+    let mut queue = VecDeque::from([root.to_owned()]);
+    let mut visited = HashSet::new();
+    while let Some(path) = queue.pop_front() {
+        if keys.len() >= MAX_REGISTRY_KEYS || !visited.insert(path.clone()) {
+            break;
+        }
+        if is_excluded_registry_path(hive, &path, excludes) {
+            continue;
+        }
+        let Ok(key) = registry_editor::open_key(hive, &path) else {
+            continue;
+        };
+        if recurse && let Ok(children) = key.keys() {
+            for child in children {
+                queue.push_back(join_path(&path, &child));
+            }
+        }
+        keys.push((path, key));
+    }
+    keys
+}
+
+fn add_key_values(preview: &mut RegistryPreview, hive: EditorHive, path: &str, key: &Key) {
+    let Ok(values) = key.values() else {
+        return;
+    };
+    for (name, _) in values {
+        if preview.is_full() {
+            break;
+        }
+        preview.add(registry_value_path(hive, path, &name));
+    }
+}
+
+fn registry_value_path(hive: EditorHive, path: &str, name: &str) -> String {
+    let label = if name.is_empty() {
+        "(По умолчанию)"
+    } else {
+        name
+    };
+    format!("{}\\{label}", full_path(hive, path))
+}
+
+fn has_excluded_descendant(hive: EditorHive, root: &str, excludes: &[String]) -> bool {
+    let root = full_path(hive, root).trim_end_matches('\\').to_lowercase();
+    let prefix = format!("{root}\\");
+    excludes.iter().any(|exclude| {
+        let exclude = exclude.trim().trim_end_matches('\\').to_lowercase();
+        exclude.starts_with(&prefix)
+    })
 }
 
 fn is_excluded(path: &Path, excludes: &[String]) -> bool {
@@ -516,10 +665,17 @@ fn is_excluded(path: &Path, excludes: &[String]) -> bool {
 }
 
 fn is_excluded_registry(spec: &RegSpec, excludes: &[String]) -> bool {
-    let full = format!("{}\\{}", spec.hive.short(), spec.path).to_lowercase();
+    is_excluded_registry_path(spec.hive, &spec.path, excludes)
+}
+
+fn is_excluded_registry_path(hive: EditorHive, path: &str, excludes: &[String]) -> bool {
+    let full = full_path(hive, path).trim_end_matches('\\').to_lowercase();
     excludes.iter().any(|exclude| {
-        let exclude = exclude.to_lowercase();
-        full.starts_with(&exclude) || full == exclude
+        let exclude = exclude.trim().trim_end_matches('\\').to_lowercase();
+        if exclude.is_empty() {
+            return false;
+        }
+        full == exclude || full.starts_with(&format!("{exclude}\\"))
     })
 }
 
@@ -592,6 +748,8 @@ fn reg_key(path: &str) -> RegSpec {
         hive: EditorHive::Hkcu,
         path: path.to_owned(),
         value: None,
+        recurse: true,
+        remove_self: true,
     }
 }
 
@@ -765,6 +923,8 @@ mod tests {
                 hive: EditorHive::Hkcu,
                 path: key_path.clone(),
                 value: Some("Value".to_owned()),
+                recurse: false,
+                remove_self: false,
             }],
         );
 
@@ -776,5 +936,139 @@ mod tests {
 
         drop(key);
         let _ = CURRENT_USER.remove_tree(&key_path);
+    }
+
+    #[test]
+    fn deletes_all_values_without_removing_the_key() {
+        use windows_registry::CURRENT_USER;
+
+        let unique = format!(
+            "ChipCleanPrivacyAll-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_micros()
+        );
+        let key_path = format!(r"Software\{unique}");
+        let key = CURRENT_USER.create(&key_path).unwrap();
+        key.set_string("One", "1").unwrap();
+        key.set_string("Two", "2").unwrap();
+        let target = target(
+            "test",
+            "Test",
+            "Test",
+            "Test",
+            true,
+            None,
+            vec![],
+            vec![RegSpec {
+                hive: EditorHive::Hkcu,
+                path: key_path.clone(),
+                value: None,
+                recurse: false,
+                remove_self: false,
+            }],
+        );
+
+        let scan = scan_target(&target);
+        assert_eq!(scan.registry, 2);
+        assert_eq!(scan.registry_items.len(), 2);
+
+        let report = clean_target(&target);
+        assert_eq!(report.registry, 2);
+        assert!(report.errors.is_empty());
+        assert!(key.get_value("One").is_err());
+        assert!(key.get_value("Two").is_err());
+        assert!(CURRENT_USER.open(&key_path).is_ok());
+
+        drop(key);
+        let _ = CURRENT_USER.remove_tree(&key_path);
+    }
+
+    #[test]
+    fn recurses_into_subkeys_for_a_specific_value() {
+        use windows_registry::CURRENT_USER;
+
+        let unique = format!(
+            "ChipCleanPrivacyRecurse-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_micros()
+        );
+        let key_path = format!(r"Software\{unique}");
+        let key = CURRENT_USER.create(&key_path).unwrap();
+        key.set_string("Target", "root").unwrap();
+        let child = key.create("Child").unwrap();
+        child.set_string("Target", "child").unwrap();
+        child.set_string("Keep", "1").unwrap();
+        let target = target(
+            "test",
+            "Test",
+            "Test",
+            "Test",
+            true,
+            None,
+            vec![],
+            vec![RegSpec {
+                hive: EditorHive::Hkcu,
+                path: key_path.clone(),
+                value: Some("Target".to_owned()),
+                recurse: true,
+                remove_self: false,
+            }],
+        );
+
+        let scan = scan_target(&target);
+        assert_eq!(scan.registry, 2);
+
+        let report = clean_target(&target);
+        assert_eq!(report.registry, 2);
+        assert!(key.get_value("Target").is_err());
+        assert!(child.get_value("Target").is_err());
+        assert!(child.get_value("Keep").is_ok());
+
+        drop(child);
+        drop(key);
+        let _ = CURRENT_USER.remove_tree(&key_path);
+    }
+
+    #[test]
+    fn remove_self_deletes_the_key_tree() {
+        use windows_registry::CURRENT_USER;
+
+        let unique = format!(
+            "ChipCleanPrivacyTree-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_micros()
+        );
+        let key_path = format!(r"Software\{unique}");
+        let key = CURRENT_USER.create(&key_path).unwrap();
+        key.set_string("One", "1").unwrap();
+        let child = key.create("Child").unwrap();
+        child.set_string("Keep", "1").unwrap();
+        drop(child);
+        drop(key);
+
+        let target = target(
+            "test",
+            "Test",
+            "Test",
+            "Test",
+            true,
+            None,
+            vec![],
+            vec![RegSpec {
+                hive: EditorHive::Hkcu,
+                path: key_path.clone(),
+                value: None,
+                recurse: true,
+                remove_self: true,
+            }],
+        );
+
+        let scan = scan_target(&target);
+        assert_eq!(scan.registry, 4);
+
+        let report = clean_target(&target);
+        assert_eq!(report.registry, 4);
+        assert!(report.errors.is_empty());
+        assert!(CURRENT_USER.open(&key_path).is_err());
     }
 }

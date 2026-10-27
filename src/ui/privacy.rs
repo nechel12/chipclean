@@ -273,7 +273,18 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
 
 fn confirmation_modal(ctx: &egui::Context, state: &mut PrivacyState) {
     let (files, bytes, history, registry) = state.selected_stats();
-    let selected = state.selected_targets();
+    let selected: Vec<(DataTarget, Vec<String>, u64)> = state
+        .selected_targets()
+        .into_iter()
+        .map(|target| {
+            let (items, count) = state
+                .scans
+                .get(&target.id)
+                .map(|scan| (scan.registry_items.clone(), scan.registry))
+                .unwrap_or_default();
+            (target, items, count)
+        })
+        .collect();
     let mut action = ModalAction::None;
     let screen = ctx.content_rect();
     egui::Area::new(egui::Id::new("privacy-confirm-backdrop"))
@@ -326,7 +337,7 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut PrivacyState) {
                         .id_salt("privacy-confirm-list")
                         .max_height(170.0)
                         .show(ui, |ui| {
-                            for target in &selected {
+                            for (target, items, count) in &selected {
                                 ui.label(
                                     RichText::new(&target.title)
                                         .font(font(10.0))
@@ -334,6 +345,16 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut PrivacyState) {
                                 );
                                 if let Some(warning) = &target.warning {
                                     ui.label(RichText::new(warning).font(font(8.0)).color(WARNING));
+                                }
+                                for item in items.iter().take(12) {
+                                    ui.label(RichText::new(item).font(font(7.5)).color(TEXT_DIM));
+                                }
+                                if *count > 12 {
+                                    ui.label(
+                                        RichText::new(format!("… ещё {}", count - 12))
+                                            .font(font(7.5))
+                                            .color(TEXT_DIM),
+                                    );
                                 }
                             }
                         });
