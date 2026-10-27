@@ -195,12 +195,28 @@ impl eframe::App for ChipCleanApp {
         self.cleanup.poll_clean();
         self.registry.poll_scan();
         self.registry.poll_clean();
+        self.registry_editor.poll_search();
+        self.snapshots.poll();
+        self.privacy.poll_scan();
+        self.privacy.poll_clean();
+        self.community.poll_scan();
+        self.community.poll_clean();
+        self.startup.poll();
         self.traces.poll();
+        self.programs.poll();
 
         if self.cleanup.is_scanning()
             || self.cleanup.is_cleaning()
             || self.registry.is_scanning()
             || self.registry.is_cleaning()
+            || self.registry_editor.is_searching()
+            || self.snapshots.is_busy()
+            || self.privacy.is_scanning()
+            || self.privacy.is_cleaning()
+            || self.community.is_scanning()
+            || self.community.is_cleaning()
+            || self.startup.is_loading()
+            || self.programs.is_loading()
             || self.traces.is_scanning()
         {
             ctx.request_repaint_after(Duration::from_millis(80));

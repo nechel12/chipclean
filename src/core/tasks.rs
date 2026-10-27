@@ -1,4 +1,4 @@
-use std::{mem::ManuallyDrop, sync::Once};
+use std::{cell::Cell, mem::ManuallyDrop};
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
@@ -31,7 +31,9 @@ pub struct TaskEntry {
     pub system: bool,
 }
 
-static COM_INIT: Once = Once::new();
+thread_local! {
+    static COM_INIT: Cell<bool> = const { Cell::new(false) };
+}
 
 pub fn scan_tasks() -> Result<Vec<TaskEntry>> {
     init_com();
@@ -95,8 +97,11 @@ fn connect() -> Result<ITaskService> {
 }
 
 fn init_com() {
-    COM_INIT.call_once(|| {
-        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    COM_INIT.with(|initialized| {
+        if !initialized.get() {
+            let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+            initialized.set(true);
+        }
     });
 }
 

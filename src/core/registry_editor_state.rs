@@ -2,14 +2,25 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     config,
-    core::registry_editor::{
-        self, EditorHive, REG_DWORD, REG_SZ, RegValueRow, SearchHit, join_path, split_parent,
+    core::{
+        job::{self, Job},
+        registry_editor::{
+            self, EditorHive, REG_DWORD, REG_SZ, RegValueRow, SearchHit, join_path, split_parent,
+        },
     },
 };
 
 pub struct Message {
     pub text: String,
     pub is_error: bool,
+}
+
+enum SearchEvent {
+    Finished {
+        hive: EditorHive,
+        query: String,
+        result: Result<Vec<SearchHit>, String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +63,7 @@ pub struct EditorState {
     pub dialog: Option<EditorDialog>,
     pub message: Option<Message>,
     loaded: bool,
+    search_job: Option<Job<SearchEvent>>,
 }
 
 impl EditorState {
@@ -69,6 +81,7 @@ impl EditorState {
             dialog: None,
             message: None,
             loaded: false,
+            search_job: None,
         }
     }
 
@@ -86,6 +99,7 @@ impl EditorState {
         if self.hive == hive {
             return;
         }
+        self.abort_search();
         self.hive = hive;
         self.selected.clear();
         self.selected_value = None;
@@ -99,6 +113,7 @@ impl EditorState {
     }
 
     pub fn refresh(&mut self) {
+        self.abort_search();
         self.children.clear();
         self.expanded.clear();
         self.expanded.insert(String::new());
@@ -164,27 +179,87 @@ impl EditorState {
     pub fn search(&mut self) {
         let query = self.search_query.trim().to_owned();
         if query.is_empty() {
+            self.abort_search();
             self.search_hits.clear();
             self.search_open = false;
             return;
         }
-        match registry_editor::search(self.hive, "", &query, 200) {
-            Ok(hits) => {
-                self.search_open = true;
-                self.message = Some(Message {
-                    text: if hits.is_empty() {
-                        "Ничего не найдено.".to_owned()
-                    } else {
-                        format!("Найдено: {}", hits.len())
-                    },
-                    is_error: false,
+
+        self.abort_search();
+        let hive = self.hive;
+        self.message = Some(Message {
+            text: "Поиск…".to_owned(),
+            is_error: false,
+        });
+        self.search_job = Some(Job::spawn(
+            "chipclean-registry-search",
+            move |cancel, tx| {
+                let result = registry_editor::search_cancellable(hive, "", &query, 200, &cancel)
+                    .map_err(|err| err.to_string());
+                let _ = tx.send(SearchEvent::Finished {
+                    hive,
+                    query,
+                    result,
                 });
-                self.search_hits = hits;
+            },
+        ));
+    }
+
+    pub fn is_searching(&self) -> bool {
+        self.search_job.is_some()
+    }
+
+    pub fn poll_search(&mut self) {
+        let (events, disconnected) = job::drain(&self.search_job);
+        let mut finished = false;
+        for event in events {
+            match event {
+                SearchEvent::Finished {
+                    hive,
+                    query,
+                    result,
+                } => {
+                    finished = true;
+                    if hive != self.hive || query != self.search_query.trim() {
+                        continue;
+                    }
+                    match result {
+                        Ok(hits) => {
+                            self.search_open = true;
+                            self.message = Some(Message {
+                                text: if hits.is_empty() {
+                                    "Ничего не найдено.".to_owned()
+                                } else {
+                                    format!("Найдено: {}", hits.len())
+                                },
+                                is_error: false,
+                            });
+                            self.search_hits = hits;
+                        }
+                        Err(err) => {
+                            self.search_open = false;
+                            self.set_error(err);
+                        }
+                    }
+                }
             }
-            Err(err) => {
-                self.search_open = false;
-                self.set_error(err.to_string());
-            }
+        }
+
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.search_job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.search_open = false;
+            self.set_error("Поиск прерван: поток завершился неожиданно.".to_owned());
+        }
+    }
+
+    fn abort_search(&mut self) {
+        if let Some(job) = self.search_job.take() {
+            job.cancel();
         }
     }
 

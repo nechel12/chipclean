@@ -190,6 +190,10 @@ fn summary(ui: &mut Ui, state: &mut StartupState) {
                     {
                         state.refresh();
                     }
+                    if state.is_loading() {
+                        ui.add_space(6.0);
+                        ui.spinner();
+                    }
                     if state.tab == StartupTab::Run {
                         ui.add_space(8.0);
                         if widgets::secondary_button(ui, "Открыть бэкапы").clicked()

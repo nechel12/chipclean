@@ -118,6 +118,10 @@ fn summary(ui: &mut Ui, state: &mut UninstallState) {
                     {
                         state.refresh();
                     }
+                    if state.is_loading() {
+                        ui.add_space(6.0);
+                        ui.spinner();
+                    }
                 });
             });
         });

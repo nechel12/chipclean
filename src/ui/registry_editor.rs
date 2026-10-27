@@ -135,6 +135,11 @@ fn toolbar(ui: &mut Ui, state: &mut EditorState) {
                 {
                     state.search();
                 }
+                if state.is_searching() {
+                    ui.add_space(6.0);
+                    ui.spinner();
+                    ui.label(RichText::new("Поиск…").font(font(9.0)).color(TEXT_MUTED));
+                }
                 ui.add_space(8.0);
                 if widgets::secondary_button_icon(ui, "Обновить", ph::ARROW_CLOCKWISE).clicked()
                 {

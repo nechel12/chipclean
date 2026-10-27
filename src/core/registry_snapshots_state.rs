@@ -1,10 +1,24 @@
 use std::collections::HashSet;
 
-use crate::core::registry_snapshots::{self, SnapshotDiff, SnapshotMeta, SnapshotRoot};
+use crate::core::{
+    job::{self, Job},
+    registry_snapshots::{self, SnapshotDiff, SnapshotMeta, SnapshotRoot},
+};
 
 pub struct Message {
     pub text: String,
     pub is_error: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Busy {
+    Create,
+    Compare,
+}
+
+enum Event {
+    Created(Result<SnapshotMeta, String>),
+    Compared(Result<SnapshotDiff, String>),
 }
 
 pub struct SnapshotState {
@@ -17,6 +31,8 @@ pub struct SnapshotState {
     pub pending_delete: Option<SnapshotMeta>,
     pub message: Option<Message>,
     loaded: bool,
+    job: Option<Job<Event>>,
+    busy: Option<Busy>,
 }
 
 impl SnapshotState {
@@ -36,6 +52,8 @@ impl SnapshotState {
             pending_delete: None,
             message: None,
             loaded: false,
+            job: None,
+            busy: None,
         }
     }
 
@@ -75,6 +93,9 @@ impl SnapshotState {
     }
 
     pub fn create(&mut self) {
+        if self.is_busy() {
+            return;
+        }
         let roots: Vec<SnapshotRoot> = self
             .roots
             .iter()
@@ -86,7 +107,59 @@ impl SnapshotState {
             return;
         }
 
-        match registry_snapshots::create_snapshot(&self.name, &roots) {
+        let name = self.name.clone();
+        self.busy = Some(Busy::Create);
+        self.job = Some(Job::spawn(
+            "chipclean-snapshot-create",
+            move |_cancel, tx| {
+                let result = registry_snapshots::create_snapshot(&name, &roots)
+                    .map_err(|err| err.to_string());
+                let _ = tx.send(Event::Created(result));
+            },
+        ));
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy.is_some()
+    }
+
+    pub fn busy_label(&self) -> Option<&'static str> {
+        self.busy.map(|busy| match busy {
+            Busy::Create => "Создание снимка…",
+            Busy::Compare => "Сравнение снимка с реестром…",
+        })
+    }
+
+    pub fn poll(&mut self) {
+        let (events, disconnected) = job::drain(&self.job);
+        let mut finished = false;
+        for event in events {
+            match event {
+                Event::Created(result) => {
+                    self.created(result);
+                    finished = true;
+                }
+                Event::Compared(result) => {
+                    self.compared(result);
+                    finished = true;
+                }
+            }
+        }
+
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.job.take() {
+            job.finish();
+        }
+        self.busy = None;
+        if !finished {
+            self.set_error("Операция прервана: поток завершился неожиданно.".to_owned());
+        }
+    }
+
+    fn created(&mut self, result: Result<SnapshotMeta, String>) {
+        match result {
             Ok(meta) => {
                 let label = meta.name.clone();
                 self.name.clear();
@@ -95,22 +168,39 @@ impl SnapshotState {
                 self.selected = Some(meta.id);
                 self.set_ok(format!("Снимок создан: {label}"));
             }
-            Err(err) => self.set_error(err.to_string()),
+            Err(err) => self.set_error(err),
         }
     }
 
     pub fn select(&mut self, id: String) {
+        if self.is_busy() {
+            return;
+        }
         self.selected = Some(id);
         self.diff = None;
     }
 
     pub fn compare(&mut self) {
+        if self.is_busy() {
+            return;
+        }
         let Some(meta) = self.selected_meta().cloned() else {
             self.set_error("Выберите снимок.".to_owned());
             return;
         };
 
-        match registry_snapshots::compare(&meta) {
+        self.busy = Some(Busy::Compare);
+        self.job = Some(Job::spawn(
+            "chipclean-snapshot-compare",
+            move |_cancel, tx| {
+                let result = registry_snapshots::compare(&meta).map_err(|err| err.to_string());
+                let _ = tx.send(Event::Compared(result));
+            },
+        ));
+    }
+
+    fn compared(&mut self, result: Result<SnapshotDiff, String>) {
+        match result {
             Ok(diff) => {
                 let count = diff.added_keys.len()
                     + diff.removed_keys.len()
@@ -127,11 +217,14 @@ impl SnapshotState {
                 });
                 self.diff = Some(diff);
             }
-            Err(err) => self.set_error(err.to_string()),
+            Err(err) => self.set_error(err),
         }
     }
 
     pub fn request_delete(&mut self) {
+        if self.is_busy() {
+            return;
+        }
         if let Some(meta) = self.selected_meta().cloned() {
             self.pending_delete = Some(meta);
         }
@@ -145,6 +238,9 @@ impl SnapshotState {
         let Some(meta) = self.pending_delete.take() else {
             return;
         };
+        if self.is_busy() {
+            return;
+        }
         match registry_snapshots::delete_snapshot(&meta) {
             Ok(()) => {
                 self.diff = None;

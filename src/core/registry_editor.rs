@@ -4,6 +4,7 @@ use std::{
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -223,7 +224,13 @@ pub fn delete_key(hive: EditorHive, path: &str, backup_dir: &Path) -> Result<Pat
     Ok(backup)
 }
 
-pub fn search(hive: EditorHive, root: &str, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+pub fn search_cancellable(
+    hive: EditorHive,
+    root: &str,
+    query: &str,
+    limit: usize,
+    cancel: &AtomicBool,
+) -> Result<Vec<SearchHit>> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -234,6 +241,9 @@ pub fn search(hive: EditorHive, root: &str, query: &str, limit: usize) -> Result
     let mut visited = 0_usize;
 
     while let Some(path) = queue.pop_front() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
         visited += 1;
         if visited > 20_000 || hits.len() >= cap {
             break;

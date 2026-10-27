@@ -78,6 +78,16 @@ pub struct CleanReport {
     pub errors: Vec<String>,
 }
 
+impl CleanReport {
+    pub fn merge(&mut self, other: CleanReport) {
+        self.files += other.files;
+        self.bytes += other.bytes;
+        self.history += other.history;
+        self.registry += other.registry;
+        self.errors.extend(other.errors);
+    }
+}
+
 fn record_blocked(scan: &mut TargetScan, item: String) {
     scan.blocked_count += 1;
     push_preview(&mut scan.blocked_items, item);

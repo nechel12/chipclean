@@ -1,4 +1,5 @@
 use super::{
+    job::{self, Job},
     services::{self, ServiceEntry},
     startup::{self, StartupEntry},
     tasks::{self, TaskEntry},
@@ -37,6 +38,9 @@ pub struct StartupState {
     pub loaded_services: bool,
     pub message: Option<Message>,
     pub pending: Option<PendingToggle>,
+    run_job: Option<Job<Result<Vec<StartupEntry>, String>>>,
+    tasks_job: Option<Job<Result<Vec<TaskEntry>, String>>>,
+    services_job: Option<Job<Result<Vec<ServiceEntry>, String>>>,
 }
 
 impl StartupState {
@@ -51,6 +55,9 @@ impl StartupState {
             loaded_services: false,
             message: None,
             pending: None,
+            run_job: None,
+            tasks_job: None,
+            services_job: None,
         }
     }
 
@@ -84,50 +91,141 @@ impl StartupState {
     }
 
     fn reload_run(&mut self) {
-        match startup::scan_entries() {
-            Ok(entries) => {
-                self.entries = entries;
-                self.loaded_run = true;
-            }
-            Err(err) => {
-                self.entries.clear();
-                self.loaded_run = true;
-                self.set_error(format!("Не удалось загрузить автозагрузку: {err:#}"));
-            }
+        if self.run_job.is_some() {
+            return;
         }
+        self.run_job = Some(Job::spawn("chipclean-startup-run", |_cancel, tx| {
+            let _ = tx.send(startup::scan_entries().map_err(|err| format!("{err:#}")));
+        }));
     }
 
     fn reload_tasks(&mut self) {
-        match tasks::scan_tasks() {
-            Ok(entries) => {
-                self.tasks = entries;
-                self.loaded_tasks = true;
-            }
-            Err(err) => {
-                self.tasks.clear();
-                self.loaded_tasks = true;
-                self.set_error(format!("Не удалось загрузить задачи планировщика: {err:#}"));
-            }
+        if self.tasks_job.is_some() {
+            return;
         }
+        self.tasks_job = Some(Job::spawn("chipclean-startup-tasks", |_cancel, tx| {
+            let _ = tx.send(tasks::scan_tasks().map_err(|err| format!("{err:#}")));
+        }));
     }
 
     fn reload_services(&mut self) {
-        match services::scan_services() {
-            Ok(entries) => {
-                tracing::info!(count = entries.len(), "services scanned");
-                self.services = entries;
-                self.loaded_services = true;
+        if self.services_job.is_some() {
+            return;
+        }
+        self.services_job = Some(Job::spawn("chipclean-startup-services", |_cancel, tx| {
+            let _ = tx.send(services::scan_services().map_err(|err| format!("{err:#}")));
+        }));
+    }
+
+    pub fn poll(&mut self) {
+        self.poll_run();
+        self.poll_tasks();
+        self.poll_services();
+    }
+
+    fn poll_run(&mut self) {
+        let (events, disconnected) = job::drain(&self.run_job);
+        let mut finished = false;
+        for event in events {
+            match event {
+                Ok(entries) => {
+                    self.entries = entries;
+                    self.loaded_run = true;
+                }
+                Err(err) => {
+                    self.entries.clear();
+                    self.loaded_run = true;
+                    self.set_error(format!("Не удалось загрузить автозагрузку: {err}"));
+                }
             }
-            Err(err) => {
-                tracing::warn!(%err, "failed to scan services");
-                self.services.clear();
-                self.loaded_services = true;
-                self.set_error(format!("Не удалось загрузить службы: {err:#}"));
+            finished = true;
+        }
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.run_job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.loaded_run = true;
+            self.set_error("Не удалось загрузить автозагрузку: поток завершился.".to_owned());
+        }
+    }
+
+    fn poll_tasks(&mut self) {
+        let (events, disconnected) = job::drain(&self.tasks_job);
+        let mut finished = false;
+        for event in events {
+            match event {
+                Ok(entries) => {
+                    self.tasks = entries;
+                    self.loaded_tasks = true;
+                }
+                Err(err) => {
+                    self.tasks.clear();
+                    self.loaded_tasks = true;
+                    self.set_error(format!("Не удалось загрузить задачи планировщика: {err}"));
+                }
             }
+            finished = true;
+        }
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.tasks_job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.loaded_tasks = true;
+            self.set_error(
+                "Не удалось загрузить задачи планировщика: поток завершился.".to_owned(),
+            );
+        }
+    }
+
+    fn poll_services(&mut self) {
+        let (events, disconnected) = job::drain(&self.services_job);
+        let mut finished = false;
+        for event in events {
+            match event {
+                Ok(entries) => {
+                    tracing::info!(count = entries.len(), "services scanned");
+                    self.services = entries;
+                    self.loaded_services = true;
+                }
+                Err(err) => {
+                    tracing::warn!(%err, "failed to scan services");
+                    self.services.clear();
+                    self.loaded_services = true;
+                    self.set_error(format!("Не удалось загрузить службы: {err}"));
+                }
+            }
+            finished = true;
+        }
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.services_job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.loaded_services = true;
+            self.set_error("Не удалось загрузить службы: поток завершился.".to_owned());
+        }
+    }
+
+    pub fn is_loading(&self) -> bool {
+        match self.tab {
+            StartupTab::Run => self.run_job.is_some(),
+            StartupTab::Tasks => self.tasks_job.is_some(),
+            StartupTab::Services => self.services_job.is_some(),
         }
     }
 
     pub fn request_toggle(&mut self, index: usize) {
+        if self.is_loading() {
+            return;
+        }
         if self.tab == StartupTab::Run {
             self.toggle_at(StartupTab::Run, index);
             return;

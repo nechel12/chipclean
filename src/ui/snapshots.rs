@@ -95,15 +95,22 @@ fn create_card(ui: &mut Ui, state: &mut SnapshotState) {
             );
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.add(
+                ui.add_enabled(
+                    !state.is_busy(),
                     egui::TextEdit::singleline(&mut state.name)
                         .hint_text("Название снимка (необязательно)")
                         .desired_width(320.0),
                 );
                 ui.add_space(8.0);
-                if widgets::primary_button(ui, "Создать снимок", ph::CAMERA, true).clicked()
+                if widgets::primary_button(ui, "Создать снимок", ph::CAMERA, !state.is_busy())
+                    .clicked()
                 {
                     state.create();
+                }
+                if let Some(label) = state.busy_label() {
+                    ui.add_space(8.0);
+                    ui.spinner();
+                    ui.label(RichText::new(label).font(font(9.5)).color(TEXT_MUTED));
                 }
             });
             ui.add_space(8.0);
@@ -172,21 +179,24 @@ fn list_card(ui: &mut Ui, state: &mut SnapshotState) {
             let mut select = None;
             let mut compare = false;
             let mut delete = None;
+            let interactive = !state.is_busy();
             let snapshots = state.snapshots.clone();
             for meta in &snapshots {
                 let selected = state.selected.as_deref() == Some(&meta.id);
                 let (clicked, delete_clicked) = snapshot_row(ui, state, meta, selected);
-                if delete_clicked {
+                if interactive && delete_clicked {
                     delete = Some(meta.clone());
-                } else if clicked {
+                } else if interactive && clicked {
                     select = Some(meta.id.clone());
                     compare = true;
                 }
                 ui.add_space(5.0);
             }
             if let Some(meta) = delete {
-                state.selected = Some(meta.id);
-                state.request_delete();
+                if !state.is_busy() {
+                    state.selected = Some(meta.id);
+                    state.request_delete();
+                }
             } else {
                 if let Some(id) = select {
                     state.select(id);

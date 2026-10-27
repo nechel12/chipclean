@@ -1,4 +1,7 @@
-use super::uninstall::{self, ProgramEntry};
+use super::{
+    job::{self, Job},
+    uninstall::{self, ProgramEntry},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProgramSort {
@@ -29,6 +32,7 @@ pub struct UninstallState {
     pub sort: ProgramSort,
     pub message: Option<Message>,
     pub pending_uninstall: Option<usize>,
+    job: Option<Job<Result<Vec<ProgramEntry>, String>>>,
 }
 
 impl UninstallState {
@@ -40,6 +44,7 @@ impl UninstallState {
             sort: ProgramSort::Name,
             message: None,
             pending_uninstall: None,
+            job: None,
         }
     }
 
@@ -50,19 +55,50 @@ impl UninstallState {
     }
 
     pub fn reload(&mut self) {
-        match uninstall::scan_programs() {
-            Ok(entries) => {
-                self.entries = entries;
-                self.loaded = true;
-            }
-            Err(err) => {
-                self.loaded = true;
-                self.message = Some(Message {
-                    text: format!("Не удалось загрузить программы: {err}"),
-                    is_error: true,
-                });
-            }
+        if self.job.is_some() {
+            return;
         }
+        self.job = Some(Job::spawn("chipclean-programs-scan", |_cancel, tx| {
+            let _ = tx.send(uninstall::scan_programs().map_err(|err| err.to_string()));
+        }));
+    }
+
+    pub fn poll(&mut self) {
+        let (events, disconnected) = job::drain(&self.job);
+        let mut finished = false;
+        for event in events {
+            match event {
+                Ok(entries) => {
+                    self.entries = entries;
+                    self.loaded = true;
+                }
+                Err(err) => {
+                    self.loaded = true;
+                    self.message = Some(Message {
+                        text: format!("Не удалось загрузить программы: {err}"),
+                        is_error: true,
+                    });
+                }
+            }
+            finished = true;
+        }
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.loaded = true;
+            self.message = Some(Message {
+                text: "Не удалось загрузить программы: поток завершился.".to_owned(),
+                is_error: true,
+            });
+        }
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.job.is_some()
     }
 
     pub fn refresh(&mut self) {
@@ -113,6 +149,9 @@ impl UninstallState {
     }
 
     pub fn request_uninstall(&mut self, index: usize) {
+        if self.is_loading() {
+            return;
+        }
         let Some(entry) = self.entries.get(index) else {
             return;
         };

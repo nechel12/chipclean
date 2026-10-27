@@ -1,9 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::Ordering,
+};
 
 use crate::{
     config,
     core::{
         community,
+        job::{self, Job},
         privacy::{self, CleanReport, DataTarget, TargetScan},
     },
 };
@@ -11,6 +15,40 @@ use crate::{
 pub struct Message {
     pub text: String,
     pub is_error: bool,
+}
+
+#[derive(Clone)]
+pub struct Progress {
+    pub total: usize,
+    pub done: usize,
+    pub current: Option<String>,
+    pub rescan: bool,
+}
+
+enum ScanEvent {
+    TargetStarted { id: String },
+    Scanned { id: String, scan: TargetScan },
+    Finished { cancelled: bool },
+}
+
+enum CleanEvent {
+    TargetStarted {
+        id: String,
+    },
+    RescanStarted {
+        total: usize,
+    },
+    RescanTargetStarted {
+        id: String,
+    },
+    Scanned {
+        id: String,
+        scan: TargetScan,
+    },
+    Finished {
+        report: CleanReport,
+        cancelled: bool,
+    },
 }
 
 pub struct CommunityState {
@@ -26,6 +64,10 @@ pub struct CommunityState {
     pub message: Option<Message>,
     pending_ids: Vec<String>,
     loaded: bool,
+    scan_job: Option<Job<ScanEvent>>,
+    scan_progress: Option<Progress>,
+    clean_job: Option<Job<CleanEvent>>,
+    clean_progress: Option<Progress>,
 }
 
 impl CommunityState {
@@ -43,6 +85,10 @@ impl CommunityState {
             message: None,
             pending_ids: Vec::new(),
             loaded: false,
+            scan_job: None,
+            scan_progress: None,
+            clean_job: None,
+            clean_progress: None,
         }
     }
 
@@ -62,6 +108,10 @@ impl CommunityState {
     }
 
     pub fn load(&mut self) {
+        if self.is_scanning() || self.is_cleaning() {
+            self.set_message("Дождитесь завершения текущей операции.", true);
+            return;
+        }
         self.cancel_clean();
         match community::parse_database(std::path::Path::new(&self.db_path)) {
             Ok(targets) => {
@@ -81,6 +131,9 @@ impl CommunityState {
     }
 
     pub fn toggle(&mut self, id: &str) {
+        if self.is_scanning() || self.is_cleaning() {
+            return;
+        }
         self.cancel_clean();
         self.scans.remove(id);
         if !self.selected.remove(id) {
@@ -93,6 +146,9 @@ impl CommunityState {
     }
 
     pub fn select_defaults(&mut self) {
+        if self.is_scanning() || self.is_cleaning() {
+            return;
+        }
         self.cancel_clean();
         self.scans.clear();
         for target in &self.targets {
@@ -103,6 +159,9 @@ impl CommunityState {
     }
 
     pub fn clear_selection(&mut self) {
+        if self.is_scanning() || self.is_cleaning() {
+            return;
+        }
         self.cancel_clean();
         self.scans.clear();
         self.selected.clear();
@@ -190,29 +249,134 @@ impl CommunityState {
     }
 
     pub fn scan(&mut self) {
+        if self.is_scanning() || self.is_cleaning() {
+            return;
+        }
         let targets = self.selected_targets();
         if targets.is_empty() {
             self.set_message("Выберите секции для проверки.", true);
             return;
         }
+        let total = targets.len();
         self.scans.clear();
-        let mut errors = 0_u64;
-        for target in &targets {
-            let scan = privacy::scan_target(target);
-            errors += scan.errors;
-            self.scans.insert(target.id.clone(), scan);
+        self.message = None;
+        self.scan_progress = Some(Progress {
+            total,
+            done: 0,
+            current: None,
+            rescan: false,
+        });
+        self.scan_job = Some(Job::spawn("chipclean-community-scan", move |cancel, tx| {
+            for target in &targets {
+                if cancel.load(Ordering::Relaxed) {
+                    break;
+                }
+                let _ = tx.send(ScanEvent::TargetStarted {
+                    id: target.id.clone(),
+                });
+                let scan = privacy::scan_target(target);
+                if tx
+                    .send(ScanEvent::Scanned {
+                        id: target.id.clone(),
+                        scan,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            let _ = tx.send(ScanEvent::Finished {
+                cancelled: cancel.load(Ordering::Relaxed),
+            });
+        }));
+    }
+
+    pub fn poll_scan(&mut self) {
+        let (events, disconnected) = job::drain(&self.scan_job);
+        let mut finished = false;
+        let mut cancelled = false;
+        for event in events {
+            match event {
+                ScanEvent::TargetStarted { id } => {
+                    if let Some(progress) = &mut self.scan_progress {
+                        progress.current = Some(id);
+                    }
+                }
+                ScanEvent::Scanned { id, scan } => {
+                    self.scans.insert(id, scan);
+                    if let Some(progress) = &mut self.scan_progress {
+                        progress.done += 1;
+                    }
+                }
+                ScanEvent::Finished {
+                    cancelled: was_cancelled,
+                } => {
+                    cancelled = was_cancelled;
+                    finished = true;
+                }
+            }
         }
-        self.set_message(
-            if errors > 0 {
-                format!("Проверено: {} · ошибок: {errors}", targets.len())
-            } else {
-                format!("Проверено секций: {}", targets.len())
-            },
-            errors > 0,
-        );
+
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.scan_job.take() {
+            job.finish();
+        }
+        let progress = self.scan_progress.take();
+        if !finished {
+            self.set_message(
+                "Проверка прервана: поток сканирования завершился неожиданно.",
+                true,
+            );
+            return;
+        }
+
+        let errors: u64 = self.scans.values().map(|scan| scan.errors).sum();
+        let done = self.scans.len();
+        let total = progress.map(|progress| progress.total).unwrap_or(done);
+        let text = if cancelled {
+            format!("Проверка отменена: {done} из {total}.")
+        } else if errors > 0 {
+            format!("Проверено: {done} · ошибок: {errors}")
+        } else {
+            format!("Проверено секций: {done}")
+        };
+        self.set_message(text, errors > 0);
+    }
+
+    pub fn is_scanning(&self) -> bool {
+        self.scan_job.is_some()
+    }
+
+    pub fn is_cleaning(&self) -> bool {
+        self.clean_job.is_some()
+    }
+
+    pub fn scan_progress(&self) -> Option<Progress> {
+        self.scan_progress.clone()
+    }
+
+    pub fn clean_progress(&self) -> Option<Progress> {
+        self.clean_progress.clone()
+    }
+
+    pub fn cancel_scan(&mut self) {
+        if let Some(job) = &self.scan_job {
+            job.cancel();
+        }
+    }
+
+    pub fn cancel_cleaning(&mut self) {
+        if let Some(job) = &self.clean_job {
+            job.cancel();
+        }
     }
 
     pub fn request_clean(&mut self) {
+        if self.is_scanning() || self.is_cleaning() {
+            return;
+        }
         let selected = self.selected_targets();
         if selected.is_empty() {
             self.set_message("Выберите секции для очистки.", true);
@@ -279,34 +443,126 @@ impl CommunityState {
         self.risk_ack = false;
         self.pending_ids.clear();
 
-        let mut report = CleanReport::default();
-        for target in &targets {
-            let target_report = privacy::clean_target(target);
-            report.files += target_report.files;
-            report.bytes += target_report.bytes;
-            report.registry += target_report.registry;
-            report.errors.extend(target_report.errors);
-        }
-        self.set_message(
-            if report.errors.is_empty() {
-                format!(
-                    "Удалено файлов: {} · записей реестра: {}",
-                    report.files, report.registry
-                )
-            } else {
-                format!(
-                    "Удалено файлов: {} · ошибок: {}",
-                    report.files,
-                    report.errors.len()
-                )
+        let total = targets.len();
+        self.clean_progress = Some(Progress {
+            total,
+            done: 0,
+            current: None,
+            rescan: false,
+        });
+        self.clean_job = Some(Job::spawn(
+            "chipclean-community-clean",
+            move |cancel, tx| {
+                let mut report = CleanReport::default();
+                let mut cleaned = Vec::new();
+                for target in &targets {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let _ = tx.send(CleanEvent::TargetStarted {
+                        id: target.id.clone(),
+                    });
+                    report.merge(privacy::clean_target(target));
+                    cleaned.push(target.clone());
+                }
+                if !cleaned.is_empty() {
+                    let _ = tx.send(CleanEvent::RescanStarted {
+                        total: cleaned.len(),
+                    });
+                    for target in &cleaned {
+                        let _ = tx.send(CleanEvent::RescanTargetStarted {
+                            id: target.id.clone(),
+                        });
+                        let scan = privacy::scan_target(target);
+                        if tx
+                            .send(CleanEvent::Scanned {
+                                id: target.id.clone(),
+                                scan,
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+                let _ = tx.send(CleanEvent::Finished {
+                    report,
+                    cancelled: cancel.load(Ordering::Relaxed),
+                });
             },
-            !report.errors.is_empty(),
-        );
-        self.last_report = Some(report);
-        for target in &targets {
-            let scan = privacy::scan_target(target);
-            self.scans.insert(target.id.clone(), scan);
+        ));
+    }
+
+    pub fn poll_clean(&mut self) {
+        let (events, disconnected) = job::drain(&self.clean_job);
+        let mut finished = false;
+        for event in events {
+            match event {
+                CleanEvent::TargetStarted { id } => {
+                    if let Some(progress) = &mut self.clean_progress {
+                        progress.current = Some(id);
+                    }
+                }
+                CleanEvent::RescanStarted { total } => {
+                    if let Some(progress) = &mut self.clean_progress {
+                        progress.rescan = true;
+                        progress.total = total;
+                        progress.done = 0;
+                        progress.current = None;
+                    }
+                }
+                CleanEvent::RescanTargetStarted { id } => {
+                    if let Some(progress) = &mut self.clean_progress {
+                        progress.current = Some(id);
+                    }
+                }
+                CleanEvent::Scanned { id, scan } => {
+                    self.scans.insert(id, scan);
+                    if let Some(progress) = &mut self.clean_progress {
+                        progress.done += 1;
+                    }
+                }
+                CleanEvent::Finished { report, cancelled } => {
+                    self.clean_finished(report, cancelled);
+                    finished = true;
+                }
+            }
         }
+
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.clean_job.take() {
+            job.finish();
+        }
+        self.clean_progress = None;
+        if !finished {
+            self.set_message("Очистка прервана: поток завершился неожиданно.", true);
+        }
+    }
+
+    fn clean_finished(&mut self, report: CleanReport, cancelled: bool) {
+        let text = if report.errors.is_empty() {
+            format!(
+                "{}Удалено файлов: {} · записей реестра: {}",
+                if cancelled {
+                    "Очистка отменена. "
+                } else {
+                    ""
+                },
+                report.files,
+                report.registry
+            )
+        } else {
+            format!(
+                "Удалено файлов: {} · ошибок: {}",
+                report.files,
+                report.errors.len()
+            )
+        };
+        let is_error = !report.errors.is_empty();
+        self.last_report = Some(report);
+        self.set_message(text, is_error);
     }
 
     fn set_message(&mut self, text: impl Into<String>, is_error: bool) {
@@ -321,7 +577,29 @@ impl CommunityState {
 mod tests {
     use super::*;
     use crate::core::privacy::FileSpec;
-    use std::fs;
+    use std::{fs, thread, time::Duration, time::Instant};
+
+    fn wait_scan(state: &mut CommunityState) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while state.is_scanning() && Instant::now() < deadline {
+            state.poll_scan();
+            if state.is_scanning() {
+                thread::sleep(Duration::from_millis(2));
+            }
+        }
+        assert!(!state.is_scanning(), "scan did not finish in time");
+    }
+
+    fn wait_clean(state: &mut CommunityState) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while state.is_cleaning() && Instant::now() < deadline {
+            state.poll_clean();
+            if state.is_cleaning() {
+                thread::sleep(Duration::from_millis(2));
+            }
+        }
+        assert!(!state.is_cleaning(), "clean did not finish in time");
+    }
 
     fn target(id: &str, path: &std::path::Path) -> DataTarget {
         DataTarget {
@@ -356,6 +634,10 @@ mod tests {
             message: None,
             pending_ids: Vec::new(),
             loaded: true,
+            scan_job: None,
+            scan_progress: None,
+            clean_job: None,
+            clean_progress: None,
         }
     }
 
@@ -379,6 +661,7 @@ mod tests {
         );
 
         state.scan();
+        wait_scan(&mut state);
         state.request_clean();
         assert!(state.pending_clean);
     }
@@ -391,6 +674,7 @@ mod tests {
         let mut state = state_with(vec![target("a", &path)]);
         state.selected.insert("a".to_owned());
         state.scan();
+        wait_scan(&mut state);
         assert!(state.scans.contains_key("a"));
 
         state.toggle("a");
@@ -413,6 +697,7 @@ mod tests {
         let mut state = state_with(vec![target("a", &first), target("b", &second)]);
         state.selected.insert("a".to_owned());
         state.scan();
+        wait_scan(&mut state);
         state.request_clean();
         assert!(state.pending_clean);
         assert_eq!(state.pending_targets().len(), 1);
@@ -420,6 +705,7 @@ mod tests {
         state.selected.insert("b".to_owned());
         state.confirm_ack = true;
         state.confirm_clean();
+        wait_clean(&mut state);
 
         assert!(!first.exists());
         assert!(second.exists());

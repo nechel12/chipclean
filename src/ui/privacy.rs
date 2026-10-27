@@ -127,23 +127,85 @@ fn summary(ui: &mut Ui, state: &mut PrivacyState) {
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::danger_button(
-                        ui,
-                        "Очистить выбранное",
-                        files > 0 || history > 0 || registry > 0,
-                    )
-                    .clicked()
-                    {
-                        state.request_clean();
-                    }
-                    ui.add_space(8.0);
-                    if widgets::secondary_button_icon(ui, "Проверить", ph::MAGNIFYING_GLASS)
+                    if state.is_scanning() || state.is_cleaning() {
+                        if widgets::secondary_button(ui, "Отмена").clicked() {
+                            if state.is_scanning() {
+                                state.cancel_scan();
+                            } else {
+                                state.cancel_cleaning();
+                            }
+                        }
+                    } else {
+                        if widgets::danger_button(
+                            ui,
+                            "Очистить выбранное",
+                            files > 0 || history > 0 || registry > 0,
+                        )
                         .clicked()
-                    {
-                        state.scan();
+                        {
+                            state.request_clean();
+                        }
+                        ui.add_space(8.0);
+                        if widgets::secondary_button_icon(ui, "Проверить", ph::MAGNIFYING_GLASS)
+                            .clicked()
+                        {
+                            state.scan();
+                        }
                     }
                 });
             });
+            if let Some(progress) = state.scan_progress() {
+                ui.add_space(10.0);
+                widgets::progress(
+                    ui,
+                    progress.done as f32 / progress.total.max(1) as f32,
+                    5.0,
+                    ACCENT,
+                );
+                ui.add_space(6.0);
+                let current = progress
+                    .current
+                    .as_deref()
+                    .and_then(|id| state.targets.iter().find(|target| target.id == id))
+                    .map(|target| target.title.as_str())
+                    .unwrap_or("Подготовка…");
+                ui.label(
+                    RichText::new(format!(
+                        "Проверка: {} из {} · {current}",
+                        progress.done, progress.total
+                    ))
+                    .font(font(10.0))
+                    .color(TEXT_MUTED),
+                );
+            } else if let Some(progress) = state.clean_progress() {
+                ui.add_space(10.0);
+                widgets::progress(
+                    ui,
+                    progress.done as f32 / progress.total.max(1) as f32,
+                    5.0,
+                    ACCENT,
+                );
+                ui.add_space(6.0);
+                let current = progress
+                    .current
+                    .as_deref()
+                    .and_then(|id| state.targets.iter().find(|target| target.id == id))
+                    .map(|target| target.title.as_str())
+                    .unwrap_or("Подготовка…");
+                let label = if progress.rescan {
+                    "Обновление"
+                } else {
+                    "Очистка"
+                };
+                ui.label(
+                    RichText::new(format!(
+                        "{label}: {} из {} · {current}",
+                        progress.done, progress.total
+                    ))
+                    .font(font(10.0))
+                    .color(TEXT_MUTED),
+                );
+            }
             ui.add_space(8.0);
             widgets::inline_hint(
                 ui,
