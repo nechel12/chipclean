@@ -28,6 +28,7 @@ use windows::core::{Interface, PCWSTR};
 use crate::{
     config,
     core::{
+        fs_move,
         journal::Journal,
         model::Risk,
         path_guard,
@@ -840,7 +841,7 @@ fn quarantine_entries_with_paths(
         }
 
         let stored = unique_quarantine_path(quarantine_dir, &entry.path);
-        if let Err(err) = fs::rename(&entry.path, &stored) {
+        if let Err(err) = fs_move::move_path(&entry.path, &stored) {
             rollback_moves(&moved);
             return Err(err)
                 .with_context(|| format!("не удалось переместить {}", entry.path.display()));
@@ -920,7 +921,7 @@ fn restore_quarantined_with_paths(
         path_guard::ensure_within(&destination, allowed_roots)?;
     }
 
-    fs::rename(&entry.stored_path, &destination).with_context(|| {
+    fs_move::move_path(&entry.stored_path, &destination).with_context(|| {
         format!(
             "не удалось вернуть {} на место {}",
             entry.stored_path.display(),
@@ -931,7 +932,7 @@ fn restore_quarantined_with_paths(
     let mut store = load_store(store_path)?;
     store.entries.retain(|item| item != entry);
     if let Err(err) = save_store(store_path, &store) {
-        let _ = fs::rename(&destination, &entry.stored_path);
+        let _ = fs_move::move_path(&destination, &entry.stored_path);
         return Err(err);
     }
 
@@ -996,7 +997,7 @@ fn unique_quarantine_path(dir: &Path, original: &Path) -> PathBuf {
 
 fn rollback_moves(moved: &[(PathBuf, PathBuf, TraceCategoryId)]) {
     for (original, stored, _) in moved.iter().rev() {
-        let _ = fs::rename(stored, original);
+        let _ = fs_move::move_path(stored, original);
     }
 }
 

@@ -14,6 +14,7 @@ use windows_registry::Type;
 use crate::{
     config,
     core::{
+        fs_move,
         journal::Journal,
         path_guard,
         registry::{self, RegistryHive, STARTUP_KEYS},
@@ -344,7 +345,7 @@ fn disable_folder(
         .unwrap_or_else(|| "startup-item".to_owned());
     let stored_path = unique_quarantine_path(quarantine_dir, &file_name);
 
-    fs::rename(path, &stored_path)
+    fs_move::move_path(path, &stored_path)
         .with_context(|| format!("не удалось переместить {}", path.display()))?;
 
     let source = source_for_folder(path);
@@ -361,7 +362,7 @@ fn disable_folder(
     });
 
     if let Err(err) = save_store(store_path, &store) {
-        let restore = fs::rename(&stored_path, path);
+        let restore = fs_move::move_path(&stored_path, path);
         return match restore {
             Ok(()) => Err(err.context("не удалось сохранить состояние; файл возвращён")),
             Err(restore_err) => Err(anyhow!(
@@ -451,7 +452,7 @@ fn enable_disabled(
             let destination = path_guard::canonical_destination(original_path)?;
             path_guard::ensure_direct_child(&destination, startup_roots)?;
 
-            fs::rename(stored_path, &destination).with_context(|| {
+            fs_move::move_path(stored_path, &destination).with_context(|| {
                 format!(
                     "не удалось вернуть {} на место {}",
                     stored_path.display(),
@@ -461,7 +462,7 @@ fn enable_disabled(
 
             store.entries.remove(position);
             if let Err(err) = save_store(store_path, &store) {
-                let _ = fs::rename(&destination, stored_path);
+                let _ = fs_move::move_path(&destination, stored_path);
                 return Err(
                     err.context("не удалось сохранить состояние; файл возвращён в карантин")
                 );

@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod cleaner;
 pub mod community;
 pub mod community_state;
+pub mod fs_move;
 pub mod job;
 pub mod journal;
 pub mod model;
