@@ -125,6 +125,43 @@ pub fn list_snapshots() -> Result<Vec<SnapshotMeta>> {
     Ok(index.entries)
 }
 
+fn snapshot_file_name(meta: &SnapshotMeta) -> Result<String> {
+    let id = meta.id.trim();
+    let valid_id = !id.is_empty()
+        && id.len() <= 128
+        && id.starts_with("snapshot-")
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'));
+    if !valid_id {
+        bail!("некорректный идентификатор снимка");
+    }
+
+    let expected = format!("{id}.json");
+    if meta.file != expected {
+        bail!("некорректное имя файла снимка");
+    }
+    Ok(expected)
+}
+
+fn snapshot_path(meta: &SnapshotMeta) -> Result<PathBuf> {
+    let name = snapshot_file_name(meta)?;
+    let dir = config::snapshots_dir();
+    let path = dir.join(name);
+
+    if path.exists() {
+        let canonical_dir = fs::canonicalize(&dir)
+            .with_context(|| format!("не удалось проверить {}", dir.display()))?;
+        let canonical_path = fs::canonicalize(&path)
+            .with_context(|| format!("не удалось проверить {}", path.display()))?;
+        if !canonical_path.starts_with(&canonical_dir) {
+            bail!("файл снимка находится вне каталога снимков");
+        }
+    }
+
+    Ok(path)
+}
+
 pub fn create_snapshot(name: &str, roots: &[SnapshotRoot]) -> Result<SnapshotMeta> {
     if roots.is_empty() {
         bail!("Выберите хотя бы один раздел");
@@ -166,7 +203,7 @@ pub fn create_snapshot(name: &str, roots: &[SnapshotRoot]) -> Result<SnapshotMet
 }
 
 pub fn delete_snapshot(meta: &SnapshotMeta) -> Result<()> {
-    let path = config::snapshots_dir().join(&meta.file);
+    let path = snapshot_path(meta)?;
     if path.exists() {
         fs::remove_file(&path).with_context(|| format!("не удалось удалить {}", path.display()))?;
     }
@@ -176,7 +213,7 @@ pub fn delete_snapshot(meta: &SnapshotMeta) -> Result<()> {
 }
 
 pub fn compare(meta: &SnapshotMeta) -> Result<SnapshotDiff> {
-    let path = config::snapshots_dir().join(&meta.file);
+    let path = snapshot_path(meta)?;
     let raw =
         fs::read(&path).with_context(|| format!("не удалось прочитать {}", path.display()))?;
     let before: SnapshotData = serde_json::from_slice(&raw)
@@ -359,7 +396,7 @@ fn save_index(index: &SnapshotIndex) -> Result<()> {
 }
 
 pub fn snapshot_size(meta: &SnapshotMeta) -> Result<u64> {
-    let path = config::snapshots_dir().join(&meta.file);
+    let path = snapshot_path(meta)?;
     fs::metadata(&path)
         .map(|metadata| metadata.len())
         .map_err(|err| anyhow!("не удалось прочитать {}: {err}", path.display()))
@@ -375,6 +412,41 @@ mod tests {
     fn hash_changes_with_type() {
         assert_ne!(hash_bytes(REG_SZ, b"a"), hash_bytes(REG_SZ, b"b"));
         assert_ne!(hash_bytes(REG_SZ, b"a"), hash_bytes(REG_DWORD, b"a"));
+    }
+
+    fn meta_with(id: &str, file: &str) -> SnapshotMeta {
+        SnapshotMeta {
+            id: id.to_owned(),
+            name: "test".to_owned(),
+            created_at: Utc::now().to_rfc3339(),
+            roots: Vec::new(),
+            file: file.to_owned(),
+            keys: 0,
+            values: 0,
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn validates_snapshot_file_names() {
+        let valid = meta_with("snapshot-ok", "snapshot-ok.json");
+        assert_eq!(snapshot_file_name(&valid).unwrap(), "snapshot-ok.json");
+
+        let invalid = [
+            ("../snapshot-ok", "../snapshot-ok.json"),
+            ("snapshot-ok", r"C:\evil.json"),
+            ("snapshot-ok", "other.json"),
+            ("index", "index.json"),
+            ("snapshot-ok", "snapshot-ok.json:stream"),
+            ("snapshot-ok", r"snapshot-ok.json\..\evil.json"),
+        ];
+        for (id, file) in invalid {
+            let meta = meta_with(id, file);
+            assert!(
+                snapshot_file_name(&meta).is_err(),
+                "должно быть отклонено: id={id:?}, file={file:?}"
+            );
+        }
     }
 
     #[test]
