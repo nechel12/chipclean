@@ -255,6 +255,14 @@ fn program_row(ui: &mut Ui, entry: &ProgramEntry, index: usize) -> bool {
         let folder_response = folder_response
             .on_hover_text("Открыть папку установки")
             .on_hover_cursor(CursorIcon::PointingHand);
+        folder_response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                true,
+                format!("Открыть папку установки {}", entry.display_name),
+            )
+        });
+        widgets::focus_ring(ui, &folder_response, folder_rect, 8);
         if folder_response.clicked()
             && let Err(err) = config::open_dir(location)
         {
@@ -305,6 +313,17 @@ fn program_row(ui: &mut Ui, entry: &ProgramEntry, index: usize) -> bool {
     } else {
         button_response.on_hover_text("Штатный деинсталлятор не найден")
     };
+
+    button_response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            enabled,
+            format!("Удалить {}", entry.display_name),
+        )
+    });
+    if enabled {
+        widgets::focus_ring(ui, &button_response, button_rect, 8);
+    }
 
     let row_response = row_response.on_hover_text(&entry.key_display);
     let _ = row_response;

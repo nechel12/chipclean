@@ -403,7 +403,7 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
         TEXT_DIM,
     );
 
-    response
+    let response = response
         .on_hover_text(format!(
             "{}\n{}{}{}",
             target.title,
@@ -419,8 +419,17 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
                 ""
             }
         ))
-        .on_hover_cursor(CursorIcon::PointingHand)
-        .clicked()
+        .on_hover_cursor(CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            true,
+            selected,
+            format!("{} — {}", target.title, target.summary),
+        )
+    });
+    widgets::focus_ring(ui, &response, rect, 7);
+    response.clicked()
 }
 
 fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
@@ -440,27 +449,7 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
         })
         .collect();
     let mut action = ModalAction::None;
-    let screen = ctx.content_rect();
-    egui::Area::new(egui::Id::new("community-confirm-backdrop"))
-        .order(egui::Order::Middle)
-        .fixed_pos(screen.min)
-        .show(ctx, |ui| {
-            let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter()
-                .rect_filled(rect, 0.0, Color32::from_black_alpha(120));
-            if response.clicked() {
-                action = ModalAction::Cancel;
-            }
-        });
-
-    egui::Window::new("community-confirm")
-        .id(egui::Id::new("community-confirm-window"))
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .order(egui::Order::Foreground)
+    let modal = egui::Modal::new(egui::Id::new("community-confirm"))
         .frame(
             Frame::new()
                 .fill(SURFACE)
@@ -592,9 +581,7 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
             });
         });
 
-    if action == ModalAction::None
-        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
+    if action == ModalAction::None && modal.should_close() {
         action = ModalAction::Cancel;
     }
     match action {

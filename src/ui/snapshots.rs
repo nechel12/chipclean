@@ -276,19 +276,42 @@ fn snapshot_row(
         },
     );
 
-    let clicked = response
-        .on_hover_text(format!(
-            "{}\n{}",
-            meta.name,
-            meta.roots
-                .iter()
-                .map(SnapshotRoot::display)
-                .collect::<Vec<_>>()
-                .join("\n")
-        ))
-        .clicked();
+    let response = response.on_hover_text(format!(
+        "{}\n{}",
+        meta.name,
+        meta.roots
+            .iter()
+            .map(SnapshotRoot::display)
+            .collect::<Vec<_>>()
+            .join("\n")
+    ));
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            selected,
+            format!(
+                "{} · {} · {} разделов · {} значений",
+                meta.name,
+                format_date(&meta.created_at),
+                meta.keys,
+                meta.values
+            ),
+        )
+    });
+    widgets::focus_ring(ui, &response, rect, 8);
+
+    delete_response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("Удалить снимок {}", meta.name),
+        )
+    });
+    widgets::focus_ring(ui, &delete_response, delete_rect, 6);
+
     (
-        clicked && !delete_response.clicked(),
+        response.clicked() && !delete_response.clicked(),
         delete_response.clicked(),
     )
 }
@@ -453,27 +476,7 @@ fn delete_modal(ctx: &egui::Context, state: &mut SnapshotState) {
         return;
     };
     let mut action = DeleteAction::None;
-    let screen = ctx.content_rect();
-    egui::Area::new(egui::Id::new("snapshot-delete-backdrop"))
-        .order(egui::Order::Middle)
-        .fixed_pos(screen.min)
-        .show(ctx, |ui| {
-            let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter()
-                .rect_filled(rect, 0.0, Color32::from_black_alpha(120));
-            if response.clicked() {
-                action = DeleteAction::Cancel;
-            }
-        });
-
-    egui::Window::new("snapshot-delete")
-        .id(egui::Id::new("snapshot-delete-window"))
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .order(egui::Order::Foreground)
+    let modal = egui::Modal::new(egui::Id::new("snapshot-delete"))
         .frame(
             Frame::new()
                 .fill(SURFACE)
@@ -511,9 +514,7 @@ fn delete_modal(ctx: &egui::Context, state: &mut SnapshotState) {
             });
         });
 
-    if action == DeleteAction::None
-        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
+    if action == DeleteAction::None && modal.should_close() {
         action = DeleteAction::Cancel;
     }
     match action {

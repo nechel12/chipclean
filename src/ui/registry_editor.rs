@@ -1,6 +1,6 @@
 use egui::{
-    Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Margin, Rect, RichText,
-    Sense, Stroke, Ui, Vec2,
+    Align2, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Margin, Rect, RichText, Sense,
+    Stroke, Ui, Vec2,
 };
 use egui_phosphor::regular as ph;
 
@@ -229,7 +229,11 @@ fn tree_node(ui: &mut Ui, state: &mut EditorState, path: String, name: String, d
     let arrow_response = ui.interact(
         arrow_rect,
         ui.id().with(("registry-tree-arrow", &path)),
-        Sense::click(),
+        if has_children {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
     );
     if has_children {
         ui.painter().text(
@@ -258,6 +262,34 @@ fn tree_node(ui: &mut Ui, state: &mut EditorState, path: String, name: String, d
         font(10.5),
         if selected { TEXT } else { TEXT_MUTED },
     );
+
+    if has_children {
+        arrow_response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Button,
+                true,
+                expanded,
+                format!(
+                    "{}: {name}",
+                    if expanded {
+                        "Свернуть"
+                    } else {
+                        "Развернуть"
+                    }
+                ),
+            )
+        });
+        widgets::focus_ring(ui, &arrow_response, arrow_rect, 4);
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            selected,
+            name.clone(),
+        )
+    });
+    widgets::focus_ring(ui, &response, rect, 6);
 
     if arrow_response.clicked() {
         if expanded {
@@ -436,7 +468,26 @@ fn value_row(ui: &mut Ui, row: &registry_editor::RegValueRow, selected: bool) ->
         TEXT_MUTED,
     );
 
-    response.on_hover_cursor(CursorIcon::PointingHand)
+    let response = response.on_hover_cursor(CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            selected,
+            format!(
+                "{} · {} · {}",
+                if row.name.is_empty() {
+                    "(По умолчанию)"
+                } else {
+                    &row.name
+                },
+                registry_editor::type_label(row.ty),
+                row.preview
+            ),
+        )
+    });
+    widgets::focus_ring(ui, &response, rect, 6);
+    response
 }
 
 fn search_window(ctx: &egui::Context, state: &mut EditorState) {
@@ -502,27 +553,7 @@ fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
         return;
     };
     let mut action = DialogAction::None;
-    let screen = ctx.content_rect();
-    egui::Area::new(egui::Id::new("registry-editor-dialog-backdrop"))
-        .order(egui::Order::Middle)
-        .fixed_pos(screen.min)
-        .show(ctx, |ui| {
-            let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter()
-                .rect_filled(rect, 0.0, Color32::from_black_alpha(120));
-            if response.clicked() {
-                action = DialogAction::Cancel;
-            }
-        });
-
-    egui::Window::new("registry-editor-dialog")
-        .id(egui::Id::new("registry-editor-dialog-window"))
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .order(egui::Order::Foreground)
+    let modal = egui::Modal::new(egui::Id::new("registry-editor-dialog"))
         .frame(
             Frame::new()
                 .fill(SURFACE)
@@ -676,9 +707,7 @@ fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
             }
         });
 
-    if action == DialogAction::None
-        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
+    if action == DialogAction::None && modal.should_close() {
         action = DialogAction::Cancel;
     }
 
@@ -766,11 +795,16 @@ fn small_button(ui: &mut Ui, label: &str, icon: &str, enabled: bool) -> egui::Re
         font(9.5),
         if enabled { TEXT } else { TEXT_DIM },
     );
-    if enabled {
+    let response = if enabled {
         response.on_hover_cursor(CursorIcon::PointingHand)
     } else {
         response
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    if enabled {
+        widgets::focus_ring(ui, &response, rect, 7);
     }
+    response
 }
 
 fn shorten(text: &str, max_chars: usize) -> String {

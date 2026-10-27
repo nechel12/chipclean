@@ -502,6 +502,15 @@ fn quarantine_row(ui: &mut Ui, entry: &QuarantinedTrace, index: usize) -> bool {
         TEXT,
     );
 
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("Вернуть {}", entry.title),
+        )
+    });
+    widgets::focus_ring(ui, &response, button_rect, 7);
+
     response.clicked()
 }
 

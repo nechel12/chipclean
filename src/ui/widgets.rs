@@ -1,6 +1,6 @@
 use egui::{
-    Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Margin, Rect, Response,
-    RichText, Sense, Stroke, Ui, Vec2,
+    Align, Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Margin, Rect,
+    Response, RichText, Sense, Stroke, Ui, Vec2, WidgetInfo, WidgetType,
 };
 use egui_phosphor::regular as ph;
 
@@ -12,6 +12,22 @@ use crate::{
     theme::*,
     ui::format,
 };
+
+/// Visible keyboard focus for hand-painted controls, plus scrolling the
+/// focused row into view when focus arrives via Tab.
+pub fn focus_ring(ui: &Ui, response: &Response, rect: Rect, radius: u8) {
+    if response.gained_focus() {
+        response.scroll_to_me(Some(Align::Center));
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            CornerRadius::same(radius),
+            Stroke::new(2.0, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
 
 pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> Response {
     let (rect, response) =
@@ -54,7 +70,11 @@ pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> Respons
         foreground,
     );
 
-    response.on_hover_cursor(CursorIcon::PointingHand)
+    let response = response.on_hover_cursor(CursorIcon::PointingHand);
+    response
+        .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, label));
+    focus_ring(ui, &response, rect, 8);
+    response
 }
 
 pub fn category_row(
@@ -143,9 +163,19 @@ pub fn category_row(
         }
     );
 
-    response
+    let response = response
         .on_hover_text(tooltip)
-        .on_hover_cursor(CursorIcon::PointingHand)
+        .on_hover_cursor(CursorIcon::PointingHand);
+    response.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::Checkbox,
+            true,
+            checked,
+            format!("{} — {}", category.title, category.summary),
+        )
+    });
+    focus_ring(ui, &response, rect, 9);
+    response
 }
 
 fn draw_checkbox(ui: &mut Ui, center: egui::Pos2, checked: bool, muted: bool) {
@@ -234,15 +264,28 @@ pub fn selectable_row(
 
     let response = response.on_hover_text(format!("{title}\n{summary}"));
 
-    if enabled {
+    let response = if enabled {
         response.on_hover_cursor(CursorIcon::PointingHand)
     } else {
         response
+    };
+
+    response.widget_info(|| {
+        WidgetInfo::selected(
+            WidgetType::Checkbox,
+            enabled,
+            checked,
+            format!("{title} — {summary}"),
+        )
+    });
+    if enabled {
+        focus_ring(ui, &response, rect, 9);
     }
+    response
 }
 
 pub fn confirmation_checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> bool {
-    let (rect, response) =
+    let (rect, mut response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
 
     if response.hovered() {
@@ -264,12 +307,15 @@ pub fn confirmation_checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> bo
         if *checked { TEXT } else { TEXT_MUTED },
     );
 
-    if response.clicked() {
+    let changed = response.clicked();
+    if changed {
         *checked = !*checked;
-        true
-    } else {
-        false
+        response.mark_changed();
     }
+
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, true, *checked, label));
+    focus_ring(ui, &response, rect, 7);
+    changed
 }
 
 pub fn primary_button(ui: &mut Ui, label: &str, icon: &str, enabled: bool) -> Response {
@@ -303,11 +349,16 @@ pub fn primary_button(ui: &mut Ui, label: &str, icon: &str, enabled: bool) -> Re
         foreground,
     );
 
-    if enabled {
+    let response = if enabled {
         response.on_hover_cursor(CursorIcon::PointingHand)
     } else {
         response
+    };
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    if enabled {
+        focus_ring(ui, &response, rect, 9);
     }
+    response
 }
 
 pub fn danger_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
@@ -351,11 +402,16 @@ pub fn danger_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
         },
     );
 
-    if enabled {
+    let response = if enabled {
         response.on_hover_cursor(CursorIcon::PointingHand)
     } else {
         response
+    };
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    if enabled {
+        focus_ring(ui, &response, rect, 9);
     }
+    response
 }
 
 pub fn secondary_button(ui: &mut Ui, label: &str) -> Response {
@@ -376,7 +432,10 @@ pub fn secondary_button(ui: &mut Ui, label: &str) -> Response {
         TEXT,
     );
 
-    response.on_hover_cursor(CursorIcon::PointingHand)
+    let response = response.on_hover_cursor(CursorIcon::PointingHand);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    focus_ring(ui, &response, rect, 8);
+    response
 }
 
 pub fn secondary_button_icon(ui: &mut Ui, label: &str, icon: &str) -> Response {
@@ -397,7 +456,10 @@ pub fn secondary_button_icon(ui: &mut Ui, label: &str, icon: &str) -> Response {
         TEXT,
     );
 
-    response.on_hover_cursor(CursorIcon::PointingHand)
+    let response = response.on_hover_cursor(CursorIcon::PointingHand);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    focus_ring(ui, &response, rect, 9);
+    response
 }
 
 pub fn switch(ui: &mut Ui, value: &mut bool, label: &str) -> bool {
@@ -426,7 +488,9 @@ pub fn switch(ui: &mut Ui, value: &mut bool, label: &str) -> bool {
             changed = true;
         }
 
-        response.on_hover_cursor(CursorIcon::PointingHand);
+        let response = response.on_hover_cursor(CursorIcon::PointingHand);
+        response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, true, *value, label));
+        focus_ring(ui, &response, rect, 11);
     });
 
     changed

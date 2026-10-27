@@ -93,13 +93,7 @@ fn tabs(ui: &mut Ui, state: &mut StartupState) {
             (StartupTab::Services, "Службы", ph::GEAR_SIX),
         ] {
             let count = state.total_count(tab);
-            if tab_button(
-                ui,
-                width,
-                &format!("{icon}  {label}"),
-                count,
-                state.tab == tab,
-            ) {
+            if tab_button(ui, width, icon, label, count, state.tab == tab) {
                 selected = Some(tab);
             }
         }
@@ -110,7 +104,14 @@ fn tabs(ui: &mut Ui, state: &mut StartupState) {
     }
 }
 
-fn tab_button(ui: &mut Ui, width: f32, label: &str, count: usize, selected: bool) -> bool {
+fn tab_button(
+    ui: &mut Ui,
+    width: f32,
+    icon: &str,
+    label: &str,
+    count: usize,
+    selected: bool,
+) -> bool {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 34.0), Sense::click());
     let fill = if selected {
         ACCENT_SOFT
@@ -132,7 +133,7 @@ fn tab_button(ui: &mut Ui, width: f32, label: &str, count: usize, selected: bool
     ui.painter().text(
         rect.left_center() + Vec2::new(12.0, 0.0),
         Align2::LEFT_CENTER,
-        label,
+        format!("{icon}  {label}"),
         if selected {
             font_semibold(11.0)
         } else {
@@ -148,7 +149,12 @@ fn tab_button(ui: &mut Ui, width: f32, label: &str, count: usize, selected: bool
         if selected { ACCENT } else { TEXT_DIM },
     );
 
-    response.on_hover_cursor(CursorIcon::PointingHand).clicked()
+    let response = response.on_hover_cursor(CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
+    });
+    widgets::focus_ring(ui, &response, rect, 8);
+    response.clicked()
 }
 
 fn summary(ui: &mut Ui, state: &mut StartupState) {
@@ -336,27 +342,7 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
         "Автозапуск будет отключён; отмена доступна этим же переключателем."
     };
 
-    let screen = ctx.content_rect();
-    egui::Area::new(egui::Id::new("startup-confirm-backdrop"))
-        .order(egui::Order::Middle)
-        .fixed_pos(screen.min)
-        .show(ctx, |ui| {
-            let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::click());
-            ui.painter()
-                .rect_filled(rect, 0.0, Color32::from_black_alpha(120));
-            if response.clicked() {
-                action = ModalAction::Cancel;
-            }
-        });
-
-    egui::Window::new("startup-confirm")
-        .id(egui::Id::new("startup-confirm-window"))
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(false)
-        .movable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .order(egui::Order::Foreground)
+    let modal = egui::Modal::new(egui::Id::new("startup-confirm"))
         .frame(
             Frame::new()
                 .fill(SURFACE)
@@ -457,9 +443,7 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
         });
     });
 
-    if action == ModalAction::None
-        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-    {
+    if action == ModalAction::None && modal.should_close() {
         action = ModalAction::Cancel;
     }
     if action == ModalAction::None
@@ -713,6 +697,16 @@ fn toggle_row(
         .on_hover_cursor(CursorIcon::PointingHand);
 
     let _ = row_response.on_hover_text(tooltip);
+
+    switch_response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            true,
+            enabled,
+            format!("{title}. {source}"),
+        )
+    });
+    widgets::focus_ring(ui, &switch_response, switch_rect, 11);
 
     switch_response.clicked()
 }
