@@ -129,6 +129,12 @@ fn scan_category(
                 }
             }
         }
+
+        if let ScanTarget::ChipCleanQuarantine = target {
+            let stats = crate::core::quarantine::stats();
+            outcome.bytes = outcome.bytes.saturating_add(stats.bytes);
+            outcome.files = outcome.files.saturating_add(stats.files);
+        }
     }
 
     let stats = walk_category_files(category, downloads_days, cancel, |_, metadata| {

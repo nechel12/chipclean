@@ -37,6 +37,12 @@ pub struct Message {
     pub is_error: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraceAction {
+    Quarantine,
+    Delete,
+}
+
 pub struct TracesState {
     pub categories: Vec<TraceCategory>,
     pub selected: BTreeSet<TraceCategoryId>,
@@ -44,7 +50,7 @@ pub struct TracesState {
     pub entries: Vec<TraceEntry>,
     pub quarantined: Vec<QuarantinedTrace>,
     pub scan: TraceScanState,
-    pub pending_quarantine: bool,
+    pub pending_action: Option<TraceAction>,
     pub confirm_ack: bool,
     pub message: Option<Message>,
     loaded: bool,
@@ -69,7 +75,7 @@ impl TracesState {
             entries: Vec::new(),
             quarantined: Vec::new(),
             scan: TraceScanState::Idle,
-            pending_quarantine: false,
+            pending_action: None,
             confirm_ack: false,
             message: None,
             loaded: false,
@@ -93,7 +99,7 @@ impl TracesState {
 
         self.entries.clear();
         self.scanned_categories = self.selected.clone();
-        self.pending_quarantine = false;
+        self.pending_action = None;
         self.confirm_ack = false;
         self.cancel = Arc::new(AtomicBool::new(false));
         self.scan = TraceScanState::Scanning {
@@ -141,7 +147,7 @@ impl TracesState {
         }
     }
 
-    pub fn can_quarantine(&self) -> bool {
+    pub fn can_process(&self) -> bool {
         !self.is_scanning()
             && !self.entries.is_empty()
             && self.selected == self.scanned_categories
@@ -159,62 +165,81 @@ impl TracesState {
             .collect()
     }
 
-    pub fn needs_ack(&self) -> bool {
-        self.selected_entries()
-            .iter()
-            .any(|entry| entry.category == TraceCategoryId::OrphanedFolders)
+    pub fn needs_ack(&self, action: TraceAction) -> bool {
+        match action {
+            TraceAction::Delete => true,
+            TraceAction::Quarantine => self.selected_entries().iter().any(|entry| {
+                matches!(
+                    entry.category,
+                    TraceCategoryId::OrphanedFolders | TraceCategoryId::DeepLeftovers
+                )
+            }),
+        }
     }
 
-    pub fn request_quarantine(&mut self) -> bool {
-        if !self.can_quarantine() {
+    pub fn request_action(&mut self, action: TraceAction) -> bool {
+        if !self.can_process() {
             return false;
         }
 
-        self.pending_quarantine = true;
+        self.pending_action = Some(action);
         self.confirm_ack = false;
         true
     }
 
-    pub fn cancel_quarantine(&mut self) {
-        self.pending_quarantine = false;
+    pub fn cancel_action(&mut self) {
+        self.pending_action = None;
         self.confirm_ack = false;
     }
 
-    pub fn confirm_quarantine(&mut self) {
-        if !self.pending_quarantine {
+    pub fn confirm_action(&mut self) {
+        let Some(action) = self.pending_action else {
             return;
-        }
+        };
 
         let entries = self.selected_entries();
         if entries.is_empty() {
-            self.cancel_quarantine();
+            self.cancel_action();
             return;
         }
-        if self.needs_ack() && !self.confirm_ack {
+        if self.needs_ack(action) && !self.confirm_ack {
             self.message = Some(Message {
-                text: "Подтвердите перемещение папок в карантин.".to_owned(),
+                text: "Подтвердите выбранное действие.".to_owned(),
                 is_error: true,
             });
             return;
         }
 
-        match traces::quarantine_entries(&entries) {
-            Ok(count) => {
+        self.pending_action = None;
+        self.confirm_ack = false;
+
+        match action {
+            TraceAction::Quarantine => match traces::quarantine_entries(&entries) {
+                Ok(count) => {
+                    self.message = Some(Message {
+                        text: format!("Перемещено в карантин: {count}"),
+                        is_error: false,
+                    });
+                    self.start_scan();
+                }
+                Err(err) => {
+                    self.message = Some(Message {
+                        text: format!("Не удалось переместить в карантин: {err}"),
+                        is_error: true,
+                    });
+                }
+            },
+            TraceAction::Delete => {
+                let outcome = traces::delete_entries(&entries);
+                let mut text = format!("Удалено безвозвратно: {}", outcome.deleted);
+                if !outcome.errors.is_empty() {
+                    text.push_str(&format!(" · ошибок: {}", outcome.errors.len()));
+                }
                 self.message = Some(Message {
-                    text: format!("Перемещено в карантин: {count}"),
-                    is_error: false,
+                    text,
+                    is_error: !outcome.errors.is_empty(),
                 });
-                self.pending_quarantine = false;
-                self.confirm_ack = false;
                 self.start_scan();
-            }
-            Err(err) => {
-                self.pending_quarantine = false;
-                self.confirm_ack = false;
-                self.message = Some(Message {
-                    text: format!("Не удалось переместить в карантин: {err}"),
-                    is_error: true,
-                });
             }
         }
     }

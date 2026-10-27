@@ -457,6 +457,18 @@ fn enable_disabled(disabled: &DisabledEntry, store_path: &Path) -> Result<String
     }
 }
 
+pub fn purge_folder_quarantine_metadata() -> Result<()> {
+    let path = config::startup_store_path();
+    let mut store = load_store(&path)?;
+    let before = store.entries.len();
+    store
+        .entries
+        .retain(|entry| matches!(entry.kind, DisabledKind::Registry { .. }));
+    if store.entries.len() != before {
+        save_store(&path, &store)?;
+    }
+    Ok(())
+}
 fn load_store(path: &Path) -> Result<DisabledStore> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,

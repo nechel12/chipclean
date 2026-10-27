@@ -1,6 +1,6 @@
 use egui::{
     Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Margin, Rect, Response,
-    RichText, Sense, Ui, Vec2,
+    RichText, Sense, Stroke, Ui, Vec2,
 };
 use egui_phosphor::regular as ph;
 
@@ -301,6 +301,54 @@ pub fn primary_button(ui: &mut Ui, label: &str, icon: &str, enabled: bool) -> Re
         format!("{icon}  {label}"),
         font_semibold(12.5),
         foreground,
+    );
+
+    if enabled {
+        response.on_hover_cursor(CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+
+pub fn danger_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
+    let width = 172.0_f32.min(ui.available_width());
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(width, 38.0),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+
+    let fill = if !enabled {
+        SURFACE_2
+    } else if response.is_pointer_button_down_on() {
+        ACCENT
+    } else if response.hovered() {
+        ACCENT_SOFT
+    } else {
+        SURFACE_2
+    };
+    let foreground = if enabled { ACCENT } else { TEXT_DIM };
+
+    ui.painter().rect_filled(rect, CornerRadius::same(9), fill);
+    ui.painter().rect_stroke(
+        rect,
+        CornerRadius::same(9),
+        Stroke::new(1.0, if enabled { ACCENT } else { BORDER }),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font_semibold(12.0),
+        if enabled && response.is_pointer_button_down_on() {
+            Color32::WHITE
+        } else {
+            foreground
+        },
     );
 
     if enabled {

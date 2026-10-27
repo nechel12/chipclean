@@ -7,7 +7,7 @@ use egui_phosphor::regular as ph;
 use crate::{
     app::Page,
     core::traces::{QuarantinedTrace, TraceCategoryId, TraceEntry, TraceKind},
-    core::traces_state::{TraceScanState, TracesState},
+    core::traces_state::{TraceAction, TraceScanState, TracesState},
     theme::*,
     ui::{common, format, widgets},
 };
@@ -31,7 +31,7 @@ pub fn show(ui: &mut Ui, state: &mut TracesState) {
             quarantine(ui, state);
         });
 
-    if state.pending_quarantine {
+    if state.pending_action.is_some() {
         confirmation_modal(ui.ctx(), state);
     }
 }
@@ -65,7 +65,7 @@ fn info_card(ui: &mut Ui) {
                     ui.add_space(2.0);
                     ui.label(
                         RichText::new(
-                            "Безопасный набор: битые ярлыки в меню «Пуск»/на рабочем столе и папки в Program Files с деинсталлятором, но без записи Uninstall. Всё перемещается в карантин с возможностью вернуть.",
+                            "Битые ярлыки, папки Program Files без записи Uninstall и тестовый глубокий поиск по AppData/ProgramData. Можно переместить в карантин или удалить сразу после подтверждения.",
                         )
                         .font(font(10.5))
                         .color(TEXT_MUTED),
@@ -75,7 +75,7 @@ fn info_card(ui: &mut Ui) {
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        widgets::badge(ui, "2 проверки", WARNING);
+                        widgets::badge(ui, "3 проверки", WARNING);
                     },
                 );
             });
@@ -114,50 +114,46 @@ fn summary(ui: &mut Ui, state: &mut TracesState) {
                     }
                 });
 
-                ui.with_layout(
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                        if state.is_scanning() {
-                            if widgets::primary_button(ui, "Остановить", ph::X, true).clicked() {
-                                state.cancel_scan();
-                            }
-                        } else if state.can_quarantine() {
-                            if widgets::primary_button(
-                                ui,
-                                "В карантин",
-                                ph::TRASH,
-                                true,
-                            )
-                            .clicked()
-                            {
-                                state.request_quarantine();
-                            }
-                            ui.add_space(8.0);
-                            if widgets::secondary_button_icon(
-                                ui,
-                                "Проверить снова",
-                                ph::ARROW_CLOCKWISE,
-                            )
-                            .clicked()
-                            {
-                                state.start_scan();
-                            }
-                        } else {
-                            let enabled = !state.selected.is_empty();
-                            if widgets::primary_button(
-                                ui,
-                                "Проверить следы",
-                                ph::MAGNIFYING_GLASS,
-                                enabled,
-                            )
-                            .clicked()
-                                && enabled
-                            {
-                                state.start_scan();
-                            }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if state.is_scanning() {
+                        if widgets::primary_button(ui, "Остановить", ph::X, true).clicked()
+                        {
+                            state.cancel_scan();
                         }
-                    },
-                );
+                    } else if state.can_process() {
+                        if widgets::primary_button(ui, "В карантин", ph::TRASH, true).clicked()
+                        {
+                            state.request_action(TraceAction::Quarantine);
+                        }
+                        ui.add_space(8.0);
+                        if widgets::danger_button(ui, "Удалить сразу", true).clicked() {
+                            state.request_action(TraceAction::Delete);
+                        }
+                        ui.add_space(8.0);
+                        if widgets::secondary_button_icon(
+                            ui,
+                            "Проверить снова",
+                            ph::ARROW_CLOCKWISE,
+                        )
+                        .clicked()
+                        {
+                            state.start_scan();
+                        }
+                    } else {
+                        let enabled = !state.selected.is_empty();
+                        if widgets::primary_button(
+                            ui,
+                            "Проверить следы",
+                            ph::MAGNIFYING_GLASS,
+                            enabled,
+                        )
+                        .clicked()
+                            && enabled
+                        {
+                            state.start_scan();
+                        }
+                    }
+                });
             });
 
             if state.is_scanning() {
@@ -194,11 +190,25 @@ fn summary(ui: &mut Ui, state: &mut TracesState) {
                 );
             }
 
+            if state
+                .categories
+                .iter()
+                .any(|category| category.experimental && state.selected.contains(&category.id))
+            {
+                ui.add_space(8.0);
+                widgets::inline_hint(
+                    ui,
+                    ph::WARNING,
+                    "Глубокий поиск — тестовая эвристика AppData/ProgramData. Возможны ложные срабатывания; проверяйте каждый путь.",
+                    WARNING,
+                );
+            }
+
             ui.add_space(8.0);
             widgets::inline_hint(
                 ui,
                 ph::SHIELD_CHECK,
-                "Найденное перемещается в карантин и может быть возвращено. Ничего не удаляется безвозвратно.",
+                "«В карантин» можно вернуть; «Удалить сразу» — безвозвратно.",
                 TEXT_DIM,
             );
         });
@@ -378,6 +388,7 @@ fn trace_row(ui: &mut Ui, entry: &TraceEntry) {
         TraceKind::OrphanFolder { evidence } => {
             format!("Деинсталлятор: {}", evidence.display())
         }
+        TraceKind::DataFolder { reason } => format!("Эвристика: {reason}"),
     };
 
     Frame::new()
@@ -495,8 +506,12 @@ fn quarantine_row(ui: &mut Ui, entry: &QuarantinedTrace, index: usize) -> bool {
 }
 
 fn confirmation_modal(ctx: &egui::Context, state: &mut TracesState) {
+    let Some(disposition) = state.pending_action else {
+        return;
+    };
     let entries = state.selected_entries();
-    let needs_ack = state.needs_ack();
+    let needs_ack = state.needs_ack(disposition);
+    let delete = disposition == TraceAction::Delete;
     let finding_categories = entries
         .iter()
         .map(|entry| entry.category)
@@ -510,9 +525,17 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut TracesState) {
 
         modal_header(
             ui,
-            ph::FOOTPRINTS,
-            "Переместить в карантин?",
-            "Объекты можно будет вернуть из раздела «В карантине».",
+            if delete { ph::WARNING } else { ph::FOOTPRINTS },
+            if delete {
+                "Удалить безвозвратно?"
+            } else {
+                "Переместить в карантин?"
+            },
+            if delete {
+                "Восстановление будет невозможно."
+            } else {
+                "Объекты можно будет вернуть из раздела «В карантине»."
+            },
             ACCENT,
         );
 
@@ -543,8 +566,12 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut TracesState) {
         ui.add_space(10.0);
         warning_box(
             ui,
-            WARNING,
-            "Файлы и папки будут перемещены в карантин. Для папок это может занять время; вернуть их можно кнопкой «Вернуть».",
+            if delete { ACCENT } else { WARNING },
+            if delete {
+                "Файлы и папки будут удалены навсегда. Восстановить их будет нельзя."
+            } else {
+                "Файлы и папки будут перемещены в карантин. Для папок это может занять время; вернуть их можно кнопкой «Вернуть»."
+            },
         );
 
         if needs_ack {
@@ -552,7 +579,11 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut TracesState) {
             widgets::confirmation_checkbox(
                 ui,
                 &mut state.confirm_ack,
-                "Я понимаю, что папки будут перемещены в карантин",
+                if delete {
+                    "Я понимаю, что восстановление невозможно"
+                } else {
+                    "Я понимаю, что папки будут перемещены в карантин"
+                },
             );
         }
 
@@ -560,7 +591,13 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut TracesState) {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let ready = !needs_ack || state.confirm_ack;
-                if widgets::primary_button(ui, "В карантин", ph::TRASH, ready).clicked()
+                if widgets::primary_button(
+                    ui,
+                    if delete { "Удалить навсегда" } else { "В карантин" },
+                    ph::TRASH,
+                    ready,
+                )
+                .clicked()
                     && ready
                 {
                     action = Action::Start;
@@ -574,14 +611,14 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut TracesState) {
     });
 
     if action == Action::None && modal.should_close() {
-        state.cancel_quarantine();
+        state.cancel_action();
         return;
     }
 
     match action {
         Action::None => {}
-        Action::Cancel => state.cancel_quarantine(),
-        Action::Start => state.confirm_quarantine(),
+        Action::Cancel => state.cancel_action(),
+        Action::Start => state.confirm_action(),
     }
 }
 
@@ -670,13 +707,16 @@ fn category_icon(id: TraceCategoryId) -> &'static str {
     match id {
         TraceCategoryId::BrokenShortcuts => ph::LINK_SIMPLE_BREAK,
         TraceCategoryId::OrphanedFolders => ph::FOLDER_SIMPLE,
+        TraceCategoryId::DeepLeftovers => ph::MAGNIFYING_GLASS_PLUS,
     }
 }
 
 fn category_risk(id: TraceCategoryId) -> crate::core::model::Risk {
     match id {
         TraceCategoryId::BrokenShortcuts => crate::core::model::Risk::Caution,
-        TraceCategoryId::OrphanedFolders => crate::core::model::Risk::Advanced,
+        TraceCategoryId::OrphanedFolders | TraceCategoryId::DeepLeftovers => {
+            crate::core::model::Risk::Advanced
+        }
     }
 }
 

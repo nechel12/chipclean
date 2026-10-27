@@ -269,7 +269,7 @@ fn summary(ui: &mut Ui, cleanup: &mut CleanupState, settings: &mut Settings) {
                     widgets::inline_hint(
                         ui,
                         ph::WARNING,
-                        "Для «Загрузок» и корзины потребуется отдельное подтверждение.",
+                        "Для «Загрузок», корзины и карантина потребуется отдельное подтверждение.",
                         WARNING,
                     );
                 }
@@ -579,7 +579,7 @@ fn confirmation_modal(ctx: &egui::Context, cleanup: &mut CleanupState, downloads
                     warning_box(
                         ui,
                         WARNING,
-                        "Для «Загрузок» и корзины потребуется отдельный шаг подтверждения.",
+                        "Для особых разделов потребуется отдельный шаг подтверждения.",
                     );
                 }
 
@@ -621,26 +621,41 @@ fn confirmation_modal(ctx: &egui::Context, cleanup: &mut CleanupState, downloads
                 modal_header(
                     ui,
                     ph::WARNING,
-                    "«Загрузки» и корзина",
+                    "Особые разделы",
                     "Эти разделы требуют дополнительного подтверждения.",
                     ACCENT,
                 );
 
+                let mut notes = Vec::new();
+                if sensitive_categories
+                    .iter()
+                    .any(|category| category.id == CategoryId::Downloads)
+                {
+                    notes.push(format!(
+                        "Из «Загрузок» будут удалены только файлы старше {downloads_days} дн. на верхнем уровне."
+                    ));
+                }
+                if sensitive_categories
+                    .iter()
+                    .any(|category| category.id == CategoryId::RecycleBin)
+                {
+                    notes.push("Корзина будет очищена полностью.".to_owned());
+                }
+                if sensitive_categories
+                    .iter()
+                    .any(|category| category.id == CategoryId::Quarantine)
+                {
+                    notes.push(
+                        "Карантин ChipClean будет очищен безвозвратно; восстановить объекты будет нельзя."
+                            .to_owned(),
+                    );
+                }
+
                 ui.add_space(14.0);
                 ui.label(
-                    RichText::new(
-                        "Корзина будет очищена полностью. Из «Загрузок» будут удалены только файлы старше указанного срока на верхнем уровне.",
-                    )
-                    .font(font(10.5))
-                    .color(TEXT_MUTED),
-                );
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(format!(
-                        "Текущий срок для «Загрузок»: {downloads_days} дн."
-                    ))
-                    .font(font(9.5))
-                    .color(TEXT_DIM),
+                    RichText::new(notes.join(" "))
+                        .font(font(10.5))
+                        .color(TEXT_MUTED),
                 );
 
                 ui.add_space(12.0);

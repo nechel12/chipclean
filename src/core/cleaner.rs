@@ -183,6 +183,25 @@ fn clean_category(
     let mut outcome = CleanOutcome::default();
 
     for target in &category.targets {
+        if let ScanTarget::ChipCleanQuarantine = target {
+            if cancel.load(Ordering::Relaxed) {
+                return outcome;
+            }
+
+            match crate::core::quarantine::purge() {
+                Ok(purge) => {
+                    outcome.bytes = outcome.bytes.saturating_add(purge.bytes);
+                    outcome.files = outcome.files.saturating_add(purge.files);
+                    outcome.errors = outcome.errors.saturating_add(purge.errors);
+                }
+                Err(err) => {
+                    tracing::warn!(%err, "failed to purge ChipClean quarantine");
+                    outcome.errors = outcome.errors.saturating_add(1);
+                }
+            }
+            continue;
+        }
+
         if !matches!(target, ScanTarget::RecycleBin) {
             continue;
         }

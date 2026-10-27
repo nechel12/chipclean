@@ -20,6 +20,7 @@ pub enum CategoryId {
     DirectXShader,
     RecycleBin,
     Downloads,
+    Quarantine,
 }
 
 impl CategoryId {
@@ -43,6 +44,7 @@ impl CategoryId {
             Self::DirectXShader => "directx_shader",
             Self::RecycleBin => "recycle_bin",
             Self::Downloads => "downloads",
+            Self::Quarantine => "quarantine",
         }
     }
 }
@@ -84,6 +86,7 @@ pub enum ScanTarget {
         max_depth: usize,
     },
     RecycleBin,
+    ChipCleanQuarantine,
 }
 
 impl ScanTarget {

@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{Context, Result, bail};
@@ -38,6 +38,7 @@ use crate::{
 pub enum TraceCategoryId {
     BrokenShortcuts,
     OrphanedFolders,
+    DeepLeftovers,
 }
 
 impl TraceCategoryId {
@@ -45,6 +46,7 @@ impl TraceCategoryId {
         match self {
             Self::BrokenShortcuts => "broken_shortcuts",
             Self::OrphanedFolders => "orphaned_folders",
+            Self::DeepLeftovers => "deep_leftovers",
         }
     }
 }
@@ -57,6 +59,7 @@ pub struct TraceCategory {
     pub icon: &'static str,
     pub risk: Risk,
     pub default_enabled: bool,
+    pub experimental: bool,
 }
 
 pub fn catalog() -> Vec<TraceCategory> {
@@ -68,6 +71,7 @@ pub fn catalog() -> Vec<TraceCategory> {
             icon: ph::LINK_SIMPLE_BREAK,
             risk: Risk::Caution,
             default_enabled: true,
+            experimental: false,
         },
         TraceCategory {
             id: TraceCategoryId::OrphanedFolders,
@@ -76,6 +80,16 @@ pub fn catalog() -> Vec<TraceCategory> {
             icon: ph::FOLDER_SIMPLE,
             risk: Risk::Advanced,
             default_enabled: true,
+            experimental: false,
+        },
+        TraceCategory {
+            id: TraceCategoryId::DeepLeftovers,
+            title: "Глубокий поиск (тест)",
+            summary: "AppData и ProgramData · возможны ошибки",
+            icon: ph::MAGNIFYING_GLASS_PLUS,
+            risk: Risk::Advanced,
+            default_enabled: false,
+            experimental: true,
         },
     ]
 }
@@ -84,6 +98,7 @@ pub fn catalog() -> Vec<TraceCategory> {
 pub enum TraceKind {
     Shortcut { target: PathBuf },
     OrphanFolder { evidence: PathBuf },
+    DataFolder { reason: String },
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +172,7 @@ pub fn spawn_scan(
                 let result = match id {
                     TraceCategoryId::BrokenShortcuts => scan_shortcuts(&cancel),
                     TraceCategoryId::OrphanedFolders => scan_orphaned_folders(&cancel),
+                    TraceCategoryId::DeepLeftovers => scan_deep_leftovers(&cancel),
                 };
 
                 match result {
@@ -381,6 +397,159 @@ fn scan_orphaned_folders(cancel: &AtomicBool) -> Result<Vec<TraceEntry>> {
     Ok(entries)
 }
 
+fn scan_deep_leftovers(cancel: &AtomicBool) -> Result<Vec<TraceEntry>> {
+    let programs =
+        uninstall::scan_programs().context("не удалось сопоставить установленные программы")?;
+    let references = installed_references(&programs);
+    let installed_tokens = installed_name_tokens(&programs);
+    let mut entries = Vec::new();
+
+    for root in appdata_roots() {
+        let Ok(read_dir) = fs::read_dir(&root) else {
+            continue;
+        };
+
+        for entry in read_dir.flatten() {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() || file_type.is_symlink() {
+                continue;
+            }
+
+            let name = entry.file_name().to_string_lossy().to_string();
+            let lower = name.to_lowercase();
+            if is_system_folder(&lower)
+                || is_referenced(&path, &references)
+                || folder_matches_installed(&lower, &installed_tokens)
+            {
+                continue;
+            }
+
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let Ok(modified) = metadata.modified() else {
+                continue;
+            };
+            let Ok(age) = SystemTime::now().duration_since(modified) else {
+                continue;
+            };
+            if age < Duration::from_secs(30 * 86_400) {
+                continue;
+            }
+
+            entries.push(TraceEntry {
+                category: TraceCategoryId::DeepLeftovers,
+                title: name,
+                detail: "Папка данных без установленной программы · тестовая эвристика".to_owned(),
+                path,
+                kind: TraceKind::DataFolder {
+                    reason: "Нет установленной программы или ссылок на эту папку".to_owned(),
+                },
+            });
+        }
+    }
+
+    Ok(entries)
+}
+
+fn appdata_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+
+    for variable in ["APPDATA", "LOCALAPPDATA", "ProgramData"] {
+        if let Some(path) = std::env::var_os(variable) {
+            let path = PathBuf::from(path);
+            if path.is_dir()
+                && !roots
+                    .iter()
+                    .any(|root| normalize_path(root) == normalize_path(&path))
+            {
+                roots.push(path);
+            }
+        }
+    }
+
+    roots
+}
+
+fn installed_name_tokens(programs: &[ProgramEntry]) -> BTreeSet<String> {
+    let mut tokens = BTreeSet::new();
+
+    for program in programs {
+        tokens.extend(name_tokens(&program.display_name));
+        tokens.extend(name_tokens(&program.publisher));
+    }
+
+    tokens
+}
+
+fn folder_matches_installed(folder: &str, installed_tokens: &BTreeSet<String>) -> bool {
+    name_tokens(folder)
+        .iter()
+        .any(|token| installed_tokens.contains(token))
+}
+
+fn name_tokens(text: &str) -> BTreeSet<String> {
+    const STOPWORDS: &[&str] = &[
+        "the",
+        "inc",
+        "llc",
+        "ltd",
+        "corp",
+        "corporation",
+        "software",
+        "technologies",
+        "technology",
+        "company",
+        "limited",
+        "gmbh",
+        "app",
+        "apps",
+        "desktop",
+        "client",
+        "studio",
+        "suite",
+        "update",
+        "setup",
+        "installer",
+        "program",
+        "programs",
+        "windows",
+        "version",
+        "service",
+        "services",
+        "system",
+        "systems",
+        "tool",
+        "tools",
+        "driver",
+        "drivers",
+        "edition",
+        "professional",
+        "premium",
+        "free",
+        "open",
+        "source",
+    ];
+
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter_map(|token| {
+            let token = token.to_lowercase();
+            if token.len() >= 3 && !STOPWORDS.contains(&token.as_str()) {
+                Some(token)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn installed_references(programs: &[ProgramEntry]) -> Vec<PathBuf> {
     let mut references = BTreeSet::new();
 
@@ -469,6 +638,22 @@ fn is_system_folder(name: &str) -> bool {
             | "dotnet"
             | "uninstall information"
             | "modifiablewindowsapps"
+            | "packages"
+            | "temp"
+            | "virtualstore"
+            | "connecteddevicesplatform"
+            | "comms"
+            | "placeholdertilelogo"
+            | "d3dscache"
+            | "nvidia"
+            | "nvidia corporation"
+            | "amd"
+            | "intel"
+            | "package cache"
+            | "usoprivate"
+            | "usoshared"
+            | "regid.1991-06.com.microsoft"
+            | "chipclean"
     )
 }
 
@@ -538,6 +723,67 @@ fn expand_env(input: &str) -> String {
 
     output.push_str(rest);
     output
+}
+
+#[derive(Debug, Default)]
+pub struct DeleteOutcome {
+    pub deleted: usize,
+    pub errors: Vec<String>,
+}
+
+pub fn delete_entries(entries: &[TraceEntry]) -> DeleteOutcome {
+    let mut outcome = DeleteOutcome::default();
+
+    for entry in entries {
+        if !entry.path.exists() {
+            continue;
+        }
+
+        match delete_path(&entry.path) {
+            Ok(()) => {
+                outcome.deleted += 1;
+                journal(json!({
+                    "ts": now(),
+                    "event": "trace_deleted_permanently",
+                    "category": entry.category.key(),
+                    "path": entry.path.display().to_string(),
+                }));
+            }
+            Err(err) => {
+                outcome
+                    .errors
+                    .push(format!("{}: {err}", entry.path.display()));
+                journal(json!({
+                    "ts": now(),
+                    "event": "trace_delete_failed",
+                    "category": entry.category.key(),
+                    "path": entry.path.display().to_string(),
+                    "error": err.to_string(),
+                }));
+            }
+        }
+    }
+
+    outcome
+}
+
+fn delete_path(path: &Path) -> Result<()> {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+    let metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("не удалось прочитать {}", path.display()))?;
+    let reparse = metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+
+    if metadata.is_dir() && !reparse {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("не удалось удалить папку {}", path.display()))?;
+    } else {
+        fs::remove_file(path).with_context(|| format!("не удалось удалить {}", path.display()))?;
+    }
+
+    Ok(())
 }
 
 pub fn quarantine_entries(entries: &[TraceEntry]) -> Result<usize> {
@@ -650,6 +896,13 @@ pub fn load_quarantine() -> Result<TraceStore> {
     load_store(&config::traces_store_path())
 }
 
+pub fn clear_quarantine_metadata() -> Result<()> {
+    let path = config::traces_store_path();
+    if path.exists() {
+        save_store(&path, &TraceStore::default())?;
+    }
+    Ok(())
+}
 fn load_store(path: &Path) -> Result<TraceStore> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
@@ -769,6 +1022,43 @@ mod tests {
     }
 
     #[test]
+    fn permanently_deletes_file_and_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("broken.lnk");
+        fs::write(&file, b"shortcut").unwrap();
+        let folder = dir.path().join("OrphanApp");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("unins000.exe"), b"stub").unwrap();
+
+        let entries = vec![
+            TraceEntry {
+                category: TraceCategoryId::BrokenShortcuts,
+                title: "broken.lnk".to_owned(),
+                detail: "missing".to_owned(),
+                path: file.clone(),
+                kind: TraceKind::Shortcut {
+                    target: PathBuf::from(r"C:\Missing\app.exe"),
+                },
+            },
+            TraceEntry {
+                category: TraceCategoryId::OrphanedFolders,
+                title: "OrphanApp".to_owned(),
+                detail: "orphan".to_owned(),
+                path: folder.clone(),
+                kind: TraceKind::OrphanFolder {
+                    evidence: folder.join("unins000.exe"),
+                },
+            },
+        ];
+
+        let outcome = delete_entries(&entries);
+        assert_eq!(outcome.deleted, 2);
+        assert!(outcome.errors.is_empty());
+        assert!(!file.exists());
+        assert!(!folder.exists());
+    }
+
+    #[test]
     fn quarantines_and_restores_a_temporary_folder() {
         let dir = tempfile::tempdir().unwrap();
         let original = dir.path().join("OrphanApp");
@@ -793,6 +1083,17 @@ mod tests {
         restore_quarantined_with_paths(&store.entries[0], &store_path).unwrap();
         assert!(original.exists());
         assert!(original.join("unins000.exe").exists());
+    }
+
+    #[test]
+    fn matches_installed_name_tokens() {
+        let mut tokens = BTreeSet::new();
+        tokens.extend(name_tokens("Discord Inc."));
+        tokens.extend(name_tokens("Mozilla"));
+
+        assert!(folder_matches_installed("Discord", &tokens));
+        assert!(folder_matches_installed("Mozilla", &tokens));
+        assert!(!folder_matches_installed("SomeOrphanApp", &tokens));
     }
 
     #[test]
