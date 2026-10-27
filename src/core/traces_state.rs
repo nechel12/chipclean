@@ -131,6 +131,19 @@ impl TracesState {
         }
     }
 
+    pub fn scan_after_uninstall(&mut self, program: &str) {
+        self.loaded = true;
+        self.message = Some(Message {
+            text: format!(
+                "Проверка следов после удаления «{program}». Отметьте оставшиеся папки и ярлыки."
+            ),
+            is_error: false,
+        });
+        if !self.is_scanning() {
+            self.start_scan();
+        }
+    }
+
     pub fn is_scanning(&self) -> bool {
         matches!(self.scan, TraceScanState::Scanning { .. })
     }

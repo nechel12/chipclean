@@ -221,6 +221,11 @@ impl eframe::App for ChipCleanApp {
         self.traces.poll();
         self.programs.poll();
 
+        if let Some(program) = self.programs.take_traces_request() {
+            self.traces.scan_after_uninstall(&program);
+            self.page = Page::Traces;
+        }
+
         if self.disk_refreshed.elapsed() >= DISK_REFRESH_INTERVAL {
             if let Ok(disk) = win::disk::system_drive_space() {
                 self.disk = Some(disk);

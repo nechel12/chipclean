@@ -22,6 +22,10 @@ pub fn show(ui: &mut Ui, state: &mut UninstallState) {
     info_card(ui);
     ui.add_space(14.0);
     summary(ui, state);
+    if state.last_launched.is_some() {
+        ui.add_space(10.0);
+        follow_up_card(ui, state);
+    }
     ui.add_space(10.0);
     filter_bar(ui, state);
     ui.add_space(8.0);
@@ -97,7 +101,7 @@ fn summary(ui: &mut Ui, state: &mut UninstallState) {
                     ui.add_space(2.0);
                     ui.label(
                         RichText::new(format!(
-                            "Показано {shown} · после деинсталляции нажмите «Обновить»"
+                            "Показано {shown} · после деинсталляции нажмите «Обновить», затем проверьте следы"
                         ))
                         .font(font(10.5))
                         .color(TEXT_MUTED),
@@ -121,6 +125,57 @@ fn summary(ui: &mut Ui, state: &mut UninstallState) {
                     if state.is_loading() {
                         ui.add_space(6.0);
                         ui.spinner();
+                    }
+                });
+            });
+        });
+}
+
+fn follow_up_card(ui: &mut Ui, state: &mut UninstallState) {
+    let Some(program) = state.last_launched.clone() else {
+        return;
+    };
+
+    Frame::new()
+        .fill(SURFACE)
+        .stroke(Stroke::new(1.0, ACCENT))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::same(16))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::hover());
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::same(10), ACCENT_SOFT);
+                ui.painter().text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    ph::FOOTPRINTS,
+                    FontId::new(19.0, FontFamily::Proportional),
+                    ACCENT,
+                );
+
+                ui.add_space(10.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new("Проверить следы после удаления?")
+                            .font(font_semibold(12.5))
+                            .color(TEXT),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Когда деинсталлятор «{program}» завершит работу, найдите оставшиеся папки и ярлыки в разделе «Следы» и отправьте их в карантин."
+                        ))
+                        .font(font(10.0))
+                        .color(TEXT_MUTED),
+                    );
+                });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::primary_button(ui, "Найти следы", ph::MAGNIFYING_GLASS, true)
+                        .clicked()
+                    {
+                        state.request_traces_scan();
                     }
                 });
             });
@@ -423,7 +478,7 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut UninstallState) {
             ui.add_space(10.0);
             ui.label(
                 RichText::new(
-                    "ChipClean не удаляет файлы и ключи программы напрямую. Дальнейшие действия выполняет сам деинсталлятор; после завершения нажмите «Обновить».",
+                    "ChipClean не удаляет файлы и ключи программы напрямую. Дальнейшие действия выполняет сам деинсталлятор; после завершения нажмите «Обновить» и проверьте оставшиеся следы.",
                 )
                 .font(font(10.0))
                 .color(TEXT_MUTED),

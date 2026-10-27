@@ -32,6 +32,8 @@ pub struct UninstallState {
     pub sort: ProgramSort,
     pub message: Option<Message>,
     pub pending_uninstall: Option<usize>,
+    pub last_launched: Option<String>,
+    traces_request: Option<String>,
     job: Option<Job<Result<Vec<ProgramEntry>, String>>>,
 }
 
@@ -44,6 +46,8 @@ impl UninstallState {
             sort: ProgramSort::Name,
             message: None,
             pending_uninstall: None,
+            last_launched: None,
+            traces_request: None,
             job: None,
         }
     }
@@ -183,6 +187,7 @@ impl UninstallState {
 
         match uninstall::launch_program(entry) {
             Ok(message) => {
+                self.last_launched = Some(entry.display_name.clone());
                 self.message = Some(Message {
                     text: message,
                     is_error: false,
@@ -195,5 +200,31 @@ impl UninstallState {
                 });
             }
         }
+    }
+
+    pub fn request_traces_scan(&mut self) {
+        if let Some(program) = self.last_launched.clone() {
+            self.traces_request = Some(program);
+        }
+    }
+
+    pub fn take_traces_request(&mut self) -> Option<String> {
+        self.traces_request.take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn traces_request_is_taken_once() {
+        let mut state = UninstallState::new();
+        state.last_launched = Some("Test App".to_owned());
+
+        state.request_traces_scan();
+
+        assert_eq!(state.take_traces_request().as_deref(), Some("Test App"));
+        assert!(state.take_traces_request().is_none());
     }
 }
