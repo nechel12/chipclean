@@ -21,6 +21,7 @@ pub struct CommunityState {
     pub filter: String,
     pub pending_clean: bool,
     pub confirm_ack: bool,
+    pub risk_ack: bool,
     pub last_report: Option<CleanReport>,
     pub message: Option<Message>,
     pending_ids: Vec<String>,
@@ -37,6 +38,7 @@ impl CommunityState {
             filter: String::new(),
             pending_clean: false,
             confirm_ack: false,
+            risk_ack: false,
             last_report: None,
             message: None,
             pending_ids: Vec::new(),
@@ -158,6 +160,35 @@ impl CommunityState {
         (files, bytes, registry)
     }
 
+    pub fn pending_risky(&self) -> (u64, Vec<String>) {
+        let mut count = 0;
+        let mut items = Vec::new();
+        for target in self
+            .targets
+            .iter()
+            .filter(|target| self.pending_ids.contains(&target.id))
+        {
+            if let Some(scan) = self.scans.get(&target.id) {
+                count += scan.risky_count;
+                for item in &scan.risky_items {
+                    if items.len() < 30 {
+                        items.push(item.clone());
+                    }
+                }
+            }
+        }
+        (count, items)
+    }
+
+    pub fn pending_blocked(&self) -> u64 {
+        self.targets
+            .iter()
+            .filter(|target| self.pending_ids.contains(&target.id))
+            .filter_map(|target| self.scans.get(&target.id))
+            .map(|scan| scan.blocked_count)
+            .sum()
+    }
+
     pub fn scan(&mut self) {
         let targets = self.selected_targets();
         if targets.is_empty() {
@@ -206,11 +237,13 @@ impl CommunityState {
         self.pending_ids = selected.into_iter().map(|target| target.id).collect();
         self.pending_clean = true;
         self.confirm_ack = false;
+        self.risk_ack = false;
     }
 
     pub fn cancel_clean(&mut self) {
         self.pending_clean = false;
         self.confirm_ack = false;
+        self.risk_ack = false;
         self.pending_ids.clear();
     }
 
@@ -236,8 +269,14 @@ impl CommunityState {
             self.set_message("Проверка устарела; выполните её повторно.", true);
             return;
         }
+        let (risky, _) = self.pending_risky();
+        if risky > 0 && !self.risk_ack {
+            self.set_message("Подтвердите очистку путей вне безопасных каталогов.", true);
+            return;
+        }
         self.pending_clean = false;
         self.confirm_ack = false;
+        self.risk_ack = false;
         self.pending_ids.clear();
 
         let mut report = CleanReport::default();
@@ -312,6 +351,7 @@ mod tests {
             filter: String::new(),
             pending_clean: false,
             confirm_ack: false,
+            risk_ack: false,
             last_report: None,
             message: None,
             pending_ids: Vec::new(),

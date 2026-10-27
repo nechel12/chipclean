@@ -16,6 +16,7 @@ use crate::{
     core::{
         journal::Journal,
         registry_editor::{self, EditorHive, full_path, join_path},
+        safety::{self, Risk, expand_env},
     },
 };
 
@@ -61,6 +62,10 @@ pub struct TargetScan {
     pub history: u64,
     pub registry: u64,
     pub registry_items: Vec<String>,
+    pub risky_count: u64,
+    pub risky_items: Vec<String>,
+    pub blocked_count: u64,
+    pub blocked_items: Vec<String>,
     pub errors: u64,
 }
 
@@ -71,6 +76,22 @@ pub struct CleanReport {
     pub history: u64,
     pub registry: u64,
     pub errors: Vec<String>,
+}
+
+fn record_blocked(scan: &mut TargetScan, item: String) {
+    scan.blocked_count += 1;
+    push_preview(&mut scan.blocked_items, item);
+}
+
+fn record_risky(scan: &mut TargetScan, item: String) {
+    scan.risky_count += 1;
+    push_preview(&mut scan.risky_items, item);
+}
+
+fn push_preview(list: &mut Vec<String>, item: String) {
+    if list.len() < safety::PREVIEW_LIMIT {
+        list.push(item);
+    }
 }
 
 pub fn personal_targets() -> Vec<DataTarget> {
@@ -254,13 +275,27 @@ pub fn scan_target(target: &DataTarget) -> TargetScan {
     let mut scan = TargetScan::default();
     let mut seen = HashSet::new();
     for spec in &target.files {
+        let pattern_risk = safety::classify_file_pattern(&spec.pattern);
+        if pattern_risk == Risk::Blocked {
+            record_blocked(&mut scan, format!("{} (путь защищён)", spec.pattern));
+            continue;
+        }
         match collect_files(target, spec) {
             Ok(files) => {
                 for (path, size) in files {
-                    if seen.insert(path) {
-                        scan.files += 1;
-                        scan.bytes += size;
+                    if !seen.insert(path.clone()) {
+                        continue;
                     }
+                    let file_risk = safety::classify_file(&path);
+                    if file_risk == Risk::Blocked {
+                        record_blocked(&mut scan, format!("{} (путь защищён)", path.display()));
+                        continue;
+                    }
+                    if file_risk == Risk::Outside {
+                        record_risky(&mut scan, path.display().to_string());
+                    }
+                    scan.files += 1;
+                    scan.bytes += size;
                 }
             }
             Err(_) => scan.errors += 1,
@@ -272,9 +307,23 @@ pub fn scan_target(target: &DataTarget) -> TargetScan {
         scan.errors += errors;
     }
     for spec in &target.registry {
+        let risk = safety::classify_registry(spec.hive, &spec.path, spec.remove_self);
+        if risk == Risk::Blocked {
+            record_blocked(
+                &mut scan,
+                format!("{} (раздел защищён)", full_path(spec.hive, &spec.path)),
+            );
+            continue;
+        }
         match scan_registry(spec, &target.exclude_registry) {
             Ok((count, items)) => {
                 scan.registry += count;
+                if risk == Risk::Outside {
+                    scan.risky_count += count;
+                    for item in &items {
+                        push_preview(&mut scan.risky_items, item.clone());
+                    }
+                }
                 let remaining = REGISTRY_PREVIEW_LIMIT.saturating_sub(scan.registry_items.len());
                 scan.registry_items
                     .extend(items.into_iter().take(remaining));
@@ -289,10 +338,22 @@ pub fn clean_target(target: &DataTarget) -> CleanReport {
     let mut report = CleanReport::default();
     let mut seen = HashSet::new();
     for spec in &target.files {
+        if safety::classify_file_pattern(&spec.pattern) == Risk::Blocked {
+            report
+                .errors
+                .push(format!("{}: защищённый путь пропущен", spec.pattern));
+            continue;
+        }
         match collect_files(target, spec) {
             Ok(files) => {
                 for (path, size) in files {
                     if !seen.insert(path.clone()) {
+                        continue;
+                    }
+                    if safety::classify_file(&path) == Risk::Blocked {
+                        report
+                            .errors
+                            .push(format!("{}: защищённый путь пропущен", path.display()));
                         continue;
                     }
                     let Ok(meta) = fs::symlink_metadata(&path) else {
@@ -324,6 +385,13 @@ pub fn clean_target(target: &DataTarget) -> CleanReport {
     }
 
     for spec in &target.registry {
+        if safety::classify_registry(spec.hive, &spec.path, spec.remove_self) == Risk::Blocked {
+            report.errors.push(format!(
+                "{}: защищённый раздел пропущен",
+                full_path(spec.hive, &spec.path)
+            ));
+            continue;
+        }
         let (deleted, errors) = clean_registry(spec, &target.exclude_registry);
         report.registry += deleted;
         report.errors.extend(errors);
@@ -677,33 +745,6 @@ fn is_excluded_registry_path(hive: EditorHive, path: &str, excludes: &[String]) 
         }
         full == exclude || full.starts_with(&format!("{exclude}\\"))
     })
-}
-
-fn expand_env(input: &str) -> String {
-    let mut result = String::new();
-    let mut rest = input;
-    while let Some(start) = rest.find('%') {
-        let (before, after) = rest.split_at(start);
-        result.push_str(before);
-        let after = &after[1..];
-        if let Some(end) = after.find('%') {
-            let name = &after[..end];
-            if let Some(value) = std::env::var_os(name) {
-                result.push_str(&value.to_string_lossy());
-            } else {
-                result.push('%');
-                result.push_str(name);
-                result.push('%');
-            }
-            rest = &after[end + 1..];
-        } else {
-            result.push('%');
-            result.push_str(after);
-            rest = "";
-        }
-    }
-    result.push_str(rest);
-    result
 }
 
 fn file(pattern: &str, recurse: bool) -> FileSpec {

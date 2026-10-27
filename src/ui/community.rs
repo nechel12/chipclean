@@ -284,20 +284,14 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
             .rect_filled(checkbox.shrink(1.0), CornerRadius::same(4), BG);
     }
 
+    let scan_risk = scan.is_some_and(|scan| scan.risky_count > 0 || scan.blocked_count > 0);
+    let warning = target.warning.is_some() || scan_risk;
     ui.painter().text(
         rect.left_center() + Vec2::new(42.0, 0.0),
         Align2::LEFT_CENTER,
-        if target.warning.is_some() {
-            ph::WARNING
-        } else {
-            ph::BROOM
-        },
+        if warning { ph::WARNING } else { ph::BROOM },
         FontId::new(14.0, FontFamily::Proportional),
-        if target.warning.is_some() {
-            WARNING
-        } else {
-            TEXT_DIM
-        },
+        if warning { WARNING } else { TEXT_DIM },
     );
     ui.painter().text(
         egui::pos2(rect.left() + 62.0, rect.center().y - 7.0),
@@ -341,14 +335,19 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
 
     response
         .on_hover_text(format!(
-            "{}\n{}{}",
+            "{}\n{}{}{}",
             target.title,
             target.summary,
             target
                 .warning
                 .as_ref()
                 .map(|warning| format!("\nВнимание: {warning}"))
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            if scan_risk {
+                "\nЕсть пути вне безопасных каталогов или защищённые пути."
+            } else {
+                ""
+            }
         ))
         .on_hover_cursor(CursorIcon::PointingHand)
         .clicked()
@@ -356,6 +355,8 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
 
 fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
     let (files, bytes, registry) = state.pending_stats();
+    let (risky, risky_items) = state.pending_risky();
+    let blocked = state.pending_blocked();
     let selected: Vec<(DataTarget, Vec<String>, u64)> = state
         .pending_targets()
         .into_iter()
@@ -459,6 +460,46 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
                             }
                         });
                 });
+            if risky > 0 {
+                ui.add_space(8.0);
+                Frame::new()
+                    .fill(ACCENT_SOFT)
+                    .stroke(Stroke::new(1.0, ACCENT))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new(format!("Вне безопасных каталогов: {risky}"))
+                                .font(font_semibold(10.0))
+                                .color(ACCENT),
+                        );
+                        for item in risky_items.iter().take(10) {
+                            ui.label(RichText::new(item).font(font(7.5)).color(TEXT_MUTED));
+                        }
+                        if risky > 10 {
+                            ui.label(
+                                RichText::new(format!("… ещё {}", risky - 10))
+                                    .font(font(7.5))
+                                    .color(TEXT_MUTED),
+                            );
+                        }
+                    });
+                ui.add_space(8.0);
+                widgets::confirmation_checkbox(
+                    ui,
+                    &mut state.risk_ack,
+                    "Я проверил(а) пути вне безопасных каталогов и разрешаю их очистку",
+                );
+            }
+            if blocked > 0 {
+                ui.add_space(6.0);
+                widgets::inline_hint(
+                    ui,
+                    ph::WARNING,
+                    &format!("Заблокировано системных путей: {blocked}. Они не будут очищены."),
+                    WARNING,
+                );
+            }
             ui.add_space(10.0);
             widgets::confirmation_checkbox(
                 ui,
@@ -468,7 +509,8 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
             ui.add_space(12.0);
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::danger_button(ui, "Очистить по базе", state.confirm_ack).clicked()
+                    let can_clean = state.confirm_ack && (risky == 0 || state.risk_ack);
+                    if widgets::danger_button(ui, "Очистить по базе", can_clean).clicked()
                     {
                         action = ModalAction::Confirm;
                     }
