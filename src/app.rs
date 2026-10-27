@@ -108,9 +108,12 @@ pub struct ChipCleanApp {
     pub traces: TracesState,
     pub programs: UninstallState,
     pub disk: Option<win::disk::DiskSpace>,
+    disk_refreshed: Instant,
     pub elevated: bool,
     toast: Option<Toast>,
 }
+
+const DISK_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 impl ChipCleanApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
@@ -140,6 +143,7 @@ impl ChipCleanApp {
             traces,
             programs,
             disk: win::disk::system_drive_space().ok(),
+            disk_refreshed: Instant::now(),
             elevated: win::elevation::is_elevated(),
             toast: None,
         }
@@ -204,6 +208,14 @@ impl eframe::App for ChipCleanApp {
         self.startup.poll();
         self.traces.poll();
         self.programs.poll();
+
+        if self.disk_refreshed.elapsed() >= DISK_REFRESH_INTERVAL {
+            if let Ok(disk) = win::disk::system_drive_space() {
+                self.disk = Some(disk);
+            }
+            self.disk_refreshed = Instant::now();
+        }
+        ctx.request_repaint_after(DISK_REFRESH_INTERVAL);
 
         if self.cleanup.is_scanning()
             || self.cleanup.is_cleaning()
