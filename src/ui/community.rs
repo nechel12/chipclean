@@ -116,7 +116,7 @@ fn database_card(ui: &mut Ui, state: &mut CommunityState) {
             ui.add_space(6.0);
             ui.label(
                 RichText::new(
-                    "Поддерживаются FileKey, RegKey, Detect, Default, Warning и ExcludeKey. Продвинутые флаги REGEX и REMOVESELF игнорируются.",
+                    "Поддерживаются FileKey и RegKey (только HKCU/HKLM), Detect, Default, Warning и ExcludeKey. FileKey с REGEX пропускается, RegKey других веток не применяется.",
                 )
                 .font(font(9.0))
                 .color(TEXT_DIM),

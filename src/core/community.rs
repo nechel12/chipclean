@@ -198,6 +198,9 @@ fn parse_reg_key(value: &str) -> Option<RegSpec> {
     let mut parts = value.split('|');
     let full = parts.next()?.trim();
     let (hive, path) = parse_hive_path(full)?;
+    // Cleaning is limited to HKCU/HKLM: HKCR is a merged view, HKU holds other
+    // users' hives and HKCC is volatile. Such RegKey entries are documented as
+    // unsupported instead of being silently half-applied.
     if !matches!(hive, EditorHive::Hkcu | EditorHive::Hklm) {
         return None;
     }
@@ -242,7 +245,7 @@ fn parse_excludes(section: &Section) -> (Vec<String>, Vec<String>) {
             files.push(rest.split('|').next().unwrap_or_default().trim().to_owned());
         } else if let Some(rest) = value.strip_prefix("REG|") {
             registry.push(rest.split('|').next().unwrap_or_default().trim().to_owned());
-        } else if first.starts_with("HKCU\\") || first.starts_with("HKLM\\") {
+        } else if parse_hive_path(first).is_some() {
             registry.push(first.to_owned());
         } else if !first.is_empty() {
             files.push(first.to_owned());
@@ -300,6 +303,31 @@ RegKey1=HKCU\Software\ChipCleanTest|Value
         assert_eq!(registry.len(), 1);
         assert_eq!(registry[0].value.as_deref(), Some("Value"));
         assert!(!detected(&sections[0]));
+    }
+
+    #[test]
+    fn skips_unsupported_hives_but_keeps_their_excludes() {
+        let text = r#"
+[Extra Hives]
+RegKey1=HKCR\ChipCleanTest\Classes|Value
+RegKey2=HKU\ChipCleanTest\Software|ALL
+RegKey3=HKCC\ChipCleanTest\Software|REMOVESELF
+ExcludeKey1=HKCR\ChipCleanTest\Classes\Keep
+ExcludeKey2=HKU\ChipCleanTest\Software\Keep
+ExcludeKey3=%TEMP%\file.txt
+"#;
+        let sections = parse_sections(text);
+        assert!(parse_registry(&sections[0]).is_empty());
+
+        let (files, registry) = parse_excludes(&sections[0]);
+        assert_eq!(files, vec![r"%TEMP%\file.txt".to_owned()]);
+        assert_eq!(
+            registry,
+            vec![
+                r"HKCR\ChipCleanTest\Classes\Keep".to_owned(),
+                r"HKU\ChipCleanTest\Software\Keep".to_owned(),
+            ]
+        );
     }
 
     #[test]
