@@ -112,9 +112,17 @@ pub fn save(settings: &Settings) -> Result<()> {
 
 pub fn open_dir(path: &Path) -> Result<()> {
     fs::create_dir_all(path).ok();
-    Command::new("explorer.exe")
+    Command::new(explorer_exe())
         .arg(path)
         .spawn()
         .context("не удалось открыть проводник")?;
     Ok(())
+}
+
+fn explorer_exe() -> PathBuf {
+    std::env::var_os("WINDIR")
+        .or_else(|| std::env::var_os("SystemRoot"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("explorer.exe")
 }
