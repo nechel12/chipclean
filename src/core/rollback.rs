@@ -14,6 +14,7 @@ use crate::{
     config,
     core::{
         journal::Journal,
+        reg_file,
         registry_editor::{self, EditorHive},
         startup::{self, StartupEntry},
         traces::{self, QuarantinedTrace},
@@ -195,36 +196,8 @@ fn parse_targets(path: &Path) -> Result<(Vec<BackupTarget>, bool)> {
         .read_to_end(&mut bytes)
         .with_context(|| format!("не удалось прочитать {}", path.display()))?;
 
-    let text = decode_reg_text(&bytes);
+    let text = reg_file::decode_text(&bytes);
     Ok(parse_targets_from_text(&text))
-}
-
-fn decode_reg_text(bytes: &[u8]) -> String {
-    if bytes.starts_with(&[0xFF, 0xFE]) {
-        let mut body = &bytes[2..];
-        body = &body[..body.len() - body.len() % 2];
-        let units: Vec<u16> = body
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| u16::from_le_bytes(*pair))
-            .collect();
-        String::from_utf16_lossy(&units)
-    } else if bytes.starts_with(&[0xFE, 0xFF]) {
-        let mut body = &bytes[2..];
-        body = &body[..body.len() - body.len() % 2];
-        let units: Vec<u16> = body
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| u16::from_be_bytes(*pair))
-            .collect();
-        String::from_utf16_lossy(&units)
-    } else if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        String::from_utf8_lossy(&bytes[3..]).into_owned()
-    } else {
-        String::from_utf8_lossy(bytes).into_owned()
-    }
 }
 
 fn parse_targets_from_text(text: &str) -> (Vec<BackupTarget>, bool) {
@@ -241,9 +214,10 @@ fn parse_targets_from_text(text: &str) -> (Vec<BackupTarget>, bool) {
             continue;
         };
         let key = rest.trim_start_matches('-').trim_matches('\\');
-        let Some(target) = parse_reg_target(key) else {
+        let Some((hive, path)) = reg_file::parse_key_path(key) else {
             continue;
         };
+        let target = BackupTarget { hive, path };
         let identity = format!(
             "{}\\{}",
             target.hive.short(),
@@ -260,22 +234,6 @@ fn parse_targets_from_text(text: &str) -> (Vec<BackupTarget>, bool) {
     }
 
     (targets, truncated)
-}
-
-fn parse_reg_target(key: &str) -> Option<BackupTarget> {
-    let (hive, path) = key.split_once('\\').unwrap_or((key, ""));
-    let hive = match hive.to_ascii_uppercase().as_str() {
-        "HKEY_CURRENT_USER" | "HKCU" => EditorHive::Hkcu,
-        "HKEY_LOCAL_MACHINE" | "HKLM" => EditorHive::Hklm,
-        "HKEY_CLASSES_ROOT" | "HKCR" => EditorHive::Hkcr,
-        "HKEY_USERS" | "HKU" => EditorHive::Hku,
-        "HKEY_CURRENT_CONFIG" | "HKCC" => EditorHive::Hkcc,
-        _ => return None,
-    };
-    Some(BackupTarget {
-        hive,
-        path: path.to_owned(),
-    })
 }
 
 pub fn restore_registry(backup: &RegistryBackup) -> Result<RestoreReport> {
@@ -401,9 +359,17 @@ fn summary_for(event: &str, value: &Value) -> (String, Option<String>) {
             .map(str::to_owned)
     };
     let first_detail = || {
-        ["path", "original", "key", "title", "program", "quarantine"]
-            .iter()
-            .find_map(|key| text(key))
+        [
+            "path",
+            "original",
+            "key",
+            "title",
+            "program",
+            "quarantine",
+            "file",
+        ]
+        .iter()
+        .find_map(|key| text(key))
     };
 
     let summary = match event {
@@ -429,6 +395,8 @@ fn summary_for(event: &str, value: &Value) -> (String, Option<String>) {
         "registry_value_deleted" => "Удалено значение реестра".to_owned(),
         "registry_key_created" => "Создан раздел реестра".to_owned(),
         "registry_key_deleted" => "Удалён раздел реестра".to_owned(),
+        "registry_value_replaced" => "Заменены значения реестра".to_owned(),
+        "reg_imported" => "Импортирован .reg-файл".to_owned(),
         "backup_restored" => "Восстановление из .reg-бэкапа".to_owned(),
         "service_startup_disabled" => "Служба переведена в ручной запуск".to_owned(),
         "service_startup_enabled" => "Служба переведена в автоматический запуск".to_owned(),
@@ -487,7 +455,7 @@ mod tests {
         for unit in text.encode_utf16() {
             bytes.extend_from_slice(&unit.to_le_bytes());
         }
-        let decoded = decode_reg_text(&bytes);
+        let decoded = reg_file::decode_text(&bytes);
         let (targets, truncated) = parse_targets_from_text(&decoded);
 
         assert!(!truncated);

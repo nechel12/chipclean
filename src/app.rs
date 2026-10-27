@@ -211,6 +211,8 @@ impl eframe::App for ChipCleanApp {
         self.registry.poll_scan();
         self.registry.poll_clean();
         self.registry_editor.poll_search();
+        self.registry_editor.poll_replace();
+        self.registry_editor.poll_import();
         self.snapshots.poll();
         self.rollback.poll();
         self.privacy.poll_scan();
@@ -238,7 +240,7 @@ impl eframe::App for ChipCleanApp {
             || self.cleanup.is_cleaning()
             || self.registry.is_scanning()
             || self.registry.is_cleaning()
-            || self.registry_editor.is_searching()
+            || self.registry_editor.is_busy()
             || self.snapshots.is_busy()
             || self.rollback.is_busy()
             || self.privacy.is_scanning()

@@ -5,9 +5,10 @@ use crate::{
     core::{
         job::{self, Job},
         registry_editor::{
-            self, EditorHive, KeyStats, REG_DWORD, REG_SZ, RegValueRow, SearchHit, join_path,
-            split_parent,
+            self, EditorHive, KeyStats, REG_DWORD, REG_SZ, RegValueRow, ReplaceHit, ReplaceReport,
+            SearchHit, join_path, split_parent,
         },
+        registry_import::{self, ImportPreview, ImportReport},
     },
 };
 
@@ -22,6 +23,16 @@ enum SearchEvent {
         query: String,
         result: Result<Vec<SearchHit>, String>,
     },
+}
+
+enum ReplaceEvent {
+    Found(Result<Vec<ReplaceHit>, String>),
+    Replaced(Result<ReplaceReport, String>),
+}
+
+enum ImportEvent {
+    Previewed(Result<ImportPreview, String>),
+    Imported(Result<ImportReport, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +61,10 @@ pub enum EditorDialog {
         path: String,
         stats: KeyStats,
     },
+    Import {
+        preview: Option<ImportPreview>,
+        error: Option<String>,
+    },
 }
 
 pub struct EditorState {
@@ -62,10 +77,18 @@ pub struct EditorState {
     pub search_query: String,
     pub search_hits: Vec<SearchHit>,
     pub search_open: bool,
+    pub replace_open: bool,
+    pub replace_find: String,
+    pub replace_with: String,
+    pub replace_ack: bool,
+    pub replace_hits: Option<Vec<ReplaceHit>>,
+    pub replace_message: Option<Message>,
     pub dialog: Option<EditorDialog>,
     pub message: Option<Message>,
     loaded: bool,
     search_job: Option<Job<SearchEvent>>,
+    replace_job: Option<Job<ReplaceEvent>>,
+    import_job: Option<Job<ImportEvent>>,
 }
 
 impl EditorState {
@@ -80,10 +103,18 @@ impl EditorState {
             search_query: String::new(),
             search_hits: Vec::new(),
             search_open: false,
+            replace_open: false,
+            replace_find: String::new(),
+            replace_with: String::new(),
+            replace_ack: false,
+            replace_hits: None,
+            replace_message: None,
             dialog: None,
             message: None,
             loaded: false,
             search_job: None,
+            replace_job: None,
+            import_job: None,
         }
     }
 
@@ -102,6 +133,7 @@ impl EditorState {
             return;
         }
         self.abort_search();
+        self.abort_replace();
         self.hive = hive;
         self.selected.clear();
         self.selected_value = None;
@@ -109,6 +141,9 @@ impl EditorState {
         self.expanded.clear();
         self.search_hits.clear();
         self.search_open = false;
+        self.replace_open = false;
+        self.replace_hits = None;
+        self.replace_message = None;
         self.expanded.insert(String::new());
         self.load_children(String::new());
         self.load_values();
@@ -120,6 +155,32 @@ impl EditorState {
         self.expanded.clear();
         self.expanded.insert(String::new());
         self.load_children(String::new());
+        self.load_values();
+    }
+
+    pub fn reload(&mut self) {
+        if registry_editor::open_key(self.hive, &self.selected).is_err() {
+            self.selected = split_parent(&self.selected)
+                .map(|(parent, _)| parent)
+                .unwrap_or_default();
+        }
+        self.selected_value = None;
+        let hive = self.hive;
+        self.expanded
+            .retain(|path| path.is_empty() || registry_editor::open_key(hive, path).is_ok());
+        self.expanded.insert(String::new());
+        self.children.clear();
+        self.load_children(String::new());
+        let mut paths: Vec<String> = self
+            .expanded
+            .iter()
+            .filter(|path| !path.is_empty())
+            .cloned()
+            .collect();
+        paths.sort();
+        for path in paths {
+            self.load_children(path);
+        }
         self.load_values();
     }
 
@@ -211,6 +272,18 @@ impl EditorState {
         self.search_job.is_some()
     }
 
+    pub fn is_replace_busy(&self) -> bool {
+        self.replace_job.is_some()
+    }
+
+    pub fn is_importing(&self) -> bool {
+        self.import_job.is_some()
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.is_searching() || self.is_replace_busy() || self.is_importing()
+    }
+
     pub fn poll_search(&mut self) {
         let (events, disconnected) = job::drain(&self.search_job);
         let mut finished = false;
@@ -261,6 +334,269 @@ impl EditorState {
 
     fn abort_search(&mut self) {
         if let Some(job) = self.search_job.take() {
+            job.cancel();
+        }
+    }
+
+    pub fn open_replace(&mut self) {
+        self.replace_open = true;
+        self.replace_hits = None;
+        self.replace_ack = false;
+        self.replace_message = None;
+    }
+
+    pub fn close_replace(&mut self) {
+        self.replace_open = false;
+        self.replace_hits = None;
+        self.replace_ack = false;
+        self.replace_message = None;
+        self.abort_replace();
+    }
+
+    pub fn find_replacements(&mut self) {
+        let find = self.replace_find.trim().to_owned();
+        if find.is_empty() {
+            self.replace_hits = None;
+            self.replace_message = Some(Message {
+                text: "Укажите строку поиска.".to_owned(),
+                is_error: true,
+            });
+            return;
+        }
+
+        self.abort_replace();
+        self.replace_hits = None;
+        self.replace_ack = false;
+        self.replace_message = Some(Message {
+            text: "Поиск совпадений…".to_owned(),
+            is_error: false,
+        });
+
+        let hive = self.hive;
+        let root = self.selected.clone();
+        let replacement = self.replace_with.clone();
+        self.replace_job = Some(Job::spawn(
+            "chipclean-registry-replace-scan",
+            move |cancel, tx| {
+                let result = registry_editor::find_replacements_cancellable(
+                    hive,
+                    &root,
+                    &find,
+                    &replacement,
+                    500,
+                    &cancel,
+                )
+                .map_err(|err| err.to_string());
+                let _ = tx.send(ReplaceEvent::Found(result));
+            },
+        ));
+    }
+
+    pub fn replace_all(&mut self) {
+        let Some(hits) = self.replace_hits.clone() else {
+            return;
+        };
+        if hits.is_empty() || self.replace_job.is_some() {
+            return;
+        }
+        if !self.replace_ack {
+            self.replace_message = Some(Message {
+                text: "Подтвердите замену: без .reg-бэкапа изменения не откатить.".to_owned(),
+                is_error: true,
+            });
+            return;
+        }
+
+        self.replace_message = Some(Message {
+            text: "Замена значений…".to_owned(),
+            is_error: false,
+        });
+        self.replace_job = Some(Job::spawn(
+            "chipclean-registry-replace",
+            move |_cancel, tx| {
+                let result = registry_editor::replace_values(&hits, &config::backups_dir())
+                    .map_err(|err| err.to_string());
+                let _ = tx.send(ReplaceEvent::Replaced(result));
+            },
+        ));
+    }
+
+    pub fn poll_replace(&mut self) {
+        let (events, disconnected) = job::drain(&self.replace_job);
+        let mut finished = false;
+        for event in events {
+            finished = true;
+            match event {
+                ReplaceEvent::Found(result) => match result {
+                    Ok(hits) => {
+                        self.replace_message = Some(Message {
+                            text: if hits.is_empty() {
+                                "Совпадений не найдено.".to_owned()
+                            } else {
+                                format!("Найдено значений: {}", hits.len())
+                            },
+                            is_error: false,
+                        });
+                        self.replace_hits = Some(hits);
+                    }
+                    Err(err) => {
+                        self.replace_hits = None;
+                        self.replace_message = Some(Message {
+                            text: err,
+                            is_error: true,
+                        });
+                    }
+                },
+                ReplaceEvent::Replaced(result) => match result {
+                    Ok(report) => {
+                        self.replace_hits = None;
+                        self.replace_ack = false;
+                        self.replace_message = Some(Message {
+                            text: format!(
+                                "Заменено значений: {}. Бэкапов: {}.",
+                                report.replaced, report.backups
+                            ),
+                            is_error: false,
+                        });
+                        self.load_values();
+                    }
+                    Err(err) => {
+                        self.replace_message = Some(Message {
+                            text: err,
+                            is_error: true,
+                        });
+                    }
+                },
+            }
+        }
+
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.replace_job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.replace_message = Some(Message {
+                text: "Операция прервана: поток завершился неожиданно.".to_owned(),
+                is_error: true,
+            });
+        }
+    }
+
+    fn abort_replace(&mut self) {
+        if let Some(job) = self.replace_job.take() {
+            job.cancel();
+        }
+    }
+
+    pub fn open_import_dialog(&mut self) {
+        let Some(path) = crate::win::file_dialog::open_reg_file() else {
+            return;
+        };
+        self.abort_import();
+        self.dialog = Some(EditorDialog::Import {
+            preview: None,
+            error: None,
+        });
+        self.import_job = Some(Job::spawn(
+            "chipclean-registry-import-preview",
+            move |_cancel, tx| {
+                let result = registry_import::preview(&path).map_err(|err| err.to_string());
+                let _ = tx.send(ImportEvent::Previewed(result));
+            },
+        ));
+    }
+
+    pub fn submit_import(&mut self) {
+        if self.import_job.is_some() {
+            return;
+        }
+        let Some(EditorDialog::Import {
+            preview: Some(preview),
+            error: None,
+        }) = &self.dialog
+        else {
+            return;
+        };
+        let preview = preview.clone();
+        self.import_job = Some(Job::spawn(
+            "chipclean-registry-import",
+            move |_cancel, tx| {
+                let result = registry_import::import(&preview).map_err(|err| err.to_string());
+                let _ = tx.send(ImportEvent::Imported(result));
+            },
+        ));
+    }
+
+    pub fn poll_import(&mut self) {
+        let (events, disconnected) = job::drain(&self.import_job);
+        let mut finished = false;
+        for event in events {
+            finished = true;
+            match event {
+                ImportEvent::Previewed(result) => match result {
+                    Ok(preview) => {
+                        self.dialog = Some(EditorDialog::Import {
+                            preview: Some(preview),
+                            error: None,
+                        });
+                    }
+                    Err(err) => {
+                        self.dialog = Some(EditorDialog::Import {
+                            preview: None,
+                            error: Some(err),
+                        });
+                    }
+                },
+                ImportEvent::Imported(result) => match result {
+                    Ok(report) => {
+                        let (keys, values) = match &self.dialog {
+                            Some(EditorDialog::Import {
+                                preview: Some(preview),
+                                ..
+                            }) => (preview.key_count(), preview.value_count),
+                            _ => (0, 0),
+                        };
+                        self.dialog = None;
+                        self.reload();
+                        self.set_ok(format!(
+                            "Импорт завершён: разделов {keys}, значений {values}. Бэкапов: {}.",
+                            report.backups
+                        ));
+                    }
+                    Err(err) => {
+                        if let Some(EditorDialog::Import { error, .. }) = &mut self.dialog {
+                            *error = Some(err);
+                        } else {
+                            self.dialog = Some(EditorDialog::Import {
+                                preview: None,
+                                error: Some(err),
+                            });
+                        }
+                    }
+                },
+            }
+        }
+
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.import_job.take() {
+            job.finish();
+        }
+        if !finished {
+            let text = "Импорт прерван: поток завершился неожиданно.".to_owned();
+            if let Some(EditorDialog::Import { error, .. }) = &mut self.dialog {
+                *error = Some(text);
+            } else {
+                self.set_error(text);
+            }
+        }
+    }
+
+    fn abort_import(&mut self) {
+        if let Some(job) = self.import_job.take() {
             job.cancel();
         }
     }
@@ -348,6 +684,7 @@ impl EditorState {
     }
 
     pub fn close_dialog(&mut self) {
+        self.abort_import();
         self.dialog = None;
     }
 
@@ -449,6 +786,10 @@ impl EditorState {
                     }
                     Err(err) => self.set_error(err.to_string()),
                 }
+            }
+            EditorDialog::Import { preview, error } => {
+                self.dialog = Some(EditorDialog::Import { preview, error });
+                self.submit_import();
             }
         }
     }

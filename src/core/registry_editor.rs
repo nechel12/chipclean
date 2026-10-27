@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{BTreeSet, VecDeque},
     fs,
     os::windows::process::CommandExt,
     path::{Path, PathBuf},
@@ -349,6 +349,179 @@ pub fn search_cancellable(
     Ok(hits)
 }
 
+#[derive(Debug, Clone)]
+pub struct ReplaceHit {
+    pub hive: EditorHive,
+    pub path: String,
+    pub value_name: String,
+    pub ty: u32,
+    pub before: String,
+    pub after: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReplaceReport {
+    pub replaced: usize,
+    pub backups: usize,
+}
+
+pub fn find_replacements_cancellable(
+    hive: EditorHive,
+    root: &str,
+    find: &str,
+    replacement: &str,
+    limit: usize,
+    cancel: &AtomicBool,
+) -> Result<Vec<ReplaceHit>> {
+    let find = find.trim();
+    if find.is_empty() {
+        return Ok(Vec::new());
+    }
+    let cap = limit.clamp(1, 1_000);
+    let mut queue = VecDeque::from([root.to_owned()]);
+    let mut hits = Vec::new();
+    let mut visited = 0_usize;
+
+    while let Some(path) = queue.pop_front() {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        visited += 1;
+        if visited > 20_000 || hits.len() >= cap {
+            break;
+        }
+
+        let Ok(key) = open_key(hive, &path) else {
+            continue;
+        };
+
+        if let Ok(values) = key.values() {
+            for (name, value) in values {
+                if hits.len() >= cap {
+                    break;
+                }
+                let ty = u32::from(value.ty());
+                if !matches!(ty, REG_SZ | REG_EXPAND_SZ | REG_MULTI_SZ) {
+                    continue;
+                }
+                let text = value_to_text(&value);
+                let Some(after) = replace_case_insensitive(&text, find, replacement) else {
+                    continue;
+                };
+                if after == text {
+                    continue;
+                }
+                hits.push(ReplaceHit {
+                    hive,
+                    path: path.clone(),
+                    value_name: name,
+                    ty,
+                    before: text,
+                    after,
+                });
+            }
+        }
+
+        if let Ok(keys) = key.keys() {
+            for child in keys {
+                if matches!(path.as_str(), "" | "Software") && child.eq_ignore_ascii_case("Classes")
+                {
+                    continue;
+                }
+                queue.push_back(join_path(&path, &child));
+                if queue.len() > 5000 {
+                    break;
+                }
+            }
+        }
+    }
+
+    hits.sort_by(|left, right| {
+        left.path
+            .to_lowercase()
+            .cmp(&right.path.to_lowercase())
+            .then_with(|| left.value_name.cmp(&right.value_name))
+    });
+    Ok(hits)
+}
+
+pub fn replace_values(hits: &[ReplaceHit], backup_dir: &Path) -> Result<ReplaceReport> {
+    if hits.is_empty() {
+        bail!("Нет значений для замены");
+    }
+
+    for hit in hits {
+        let (ty, text) = read_value_text(hit.hive, &hit.path, &hit.value_name)?;
+        if ty != hit.ty || text != hit.before {
+            bail!(
+                "Значение {} изменилось после поиска; повторите поиск и замену",
+                full_path(hit.hive, &hit.path)
+            );
+        }
+    }
+
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
+    let safety_dir = backup_dir.join(format!("replace-{stamp}"));
+    let mut backed_up = BTreeSet::new();
+    let mut report = ReplaceReport::default();
+
+    for hit in hits {
+        let identity = format!("{}\\{}", hit.hive.short(), hit.path.to_ascii_lowercase());
+        if backed_up.insert(identity) {
+            backup_key_to(hit.hive, &hit.path, &safety_dir)?;
+            report.backups += 1;
+        }
+    }
+
+    for hit in hits {
+        let key = open_key_rw(hit.hive, &hit.path)?;
+        write_raw(&key, &hit.value_name, hit.ty, &hit.after)?;
+        report.replaced += 1;
+    }
+
+    journal(json!({
+        "ts": Utc::now().to_rfc3339(),
+        "event": "registry_value_replaced",
+        "keys": report.backups,
+        "values": report.replaced,
+        "backup": safety_dir.display().to_string(),
+    }));
+
+    Ok(report)
+}
+
+fn replace_case_insensitive(text: &str, find: &str, replacement: &str) -> Option<String> {
+    let needle: Vec<char> = find.chars().collect();
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    if needle.is_empty() || chars.len() < needle.len() {
+        return None;
+    }
+
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0_usize;
+    let mut changed = false;
+    while index < chars.len() {
+        let matches = index + needle.len() <= chars.len()
+            && needle
+                .iter()
+                .enumerate()
+                .all(|(offset, expected)| char_eq_ignore_case(chars[index + offset].1, *expected));
+        if matches {
+            output.push_str(replacement);
+            index += needle.len();
+            changed = true;
+        } else {
+            output.push(chars[index].1);
+            index += 1;
+        }
+    }
+    changed.then_some(output)
+}
+
+fn char_eq_ignore_case(left: char, right: char) -> bool {
+    left == right || left.to_lowercase().eq(right.to_lowercase())
+}
+
 pub fn full_path(hive: EditorHive, path: &str) -> String {
     if path.trim().is_empty() {
         hive.short().to_owned()
@@ -612,6 +785,55 @@ fn journal(event: serde_json::Value) {
 mod tests {
     use super::*;
     use windows_registry::CURRENT_USER;
+
+    #[test]
+    fn replaces_text_values_after_backup() {
+        let _guard = crate::core::registry_test_guard();
+        let unique = format!(
+            "ChipCleanReplace-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_micros()
+        );
+        let parent = format!(r"Software\{unique}");
+        let key = CURRENT_USER.create(&parent).unwrap();
+        write_raw(&key, "Text", REG_SZ, "Hello world, hello").unwrap();
+        write_raw(&key, "Number", REG_DWORD, "42").unwrap();
+        drop(key);
+
+        let cancel = AtomicBool::new(false);
+        let hits =
+            find_replacements_cancellable(EditorHive::Hkcu, &parent, "HELLO", "Hi", 10, &cancel)
+                .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].value_name, "Text");
+        assert_eq!(hits[0].after, "Hi world, Hi");
+
+        let dir = tempfile::tempdir().unwrap();
+        let report = replace_values(&hits, dir.path()).unwrap();
+        assert_eq!(report.replaced, 1);
+        assert_eq!(report.backups, 1);
+
+        let (_, text) = read_value_text(EditorHive::Hkcu, &parent, "Text").unwrap();
+        assert_eq!(text, "Hi world, Hi");
+        let (_, number) = read_value_text(EditorHive::Hkcu, &parent, "Number").unwrap();
+        assert_eq!(number, "42");
+
+        let _ = CURRENT_USER.remove_tree(&parent);
+    }
+
+    #[test]
+    fn replace_is_case_insensitive() {
+        assert_eq!(
+            replace_case_insensitive("abc ABC", "abc", "x").as_deref(),
+            Some("x x")
+        );
+        assert_eq!(
+            replace_case_insensitive("Hello world", "WORLD", "there").as_deref(),
+            Some("Hello there")
+        );
+        assert!(replace_case_insensitive("abc", "abcd", "x").is_none());
+        assert!(replace_case_insensitive("abc", "", "x").is_none());
+    }
 
     #[test]
     fn parses_hex_values() {

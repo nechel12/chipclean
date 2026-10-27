@@ -1,6 +1,7 @@
 pub mod dialog;
 pub mod disk;
 pub mod elevation;
+pub mod file_dialog;
 pub mod paths;
 pub mod recycle_bin;
 

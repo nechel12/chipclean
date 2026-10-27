@@ -44,6 +44,7 @@ pub fn show(ui: &mut Ui, state: &mut EditorState) {
     });
 
     search_window(ui.ctx(), state);
+    replace_window(ui.ctx(), state);
     dialog_window(ui.ctx(), state);
 }
 
@@ -140,7 +141,10 @@ fn toolbar(ui: &mut Ui, state: &mut EditorState) {
                     ui.spinner();
                     ui.label(RichText::new("Поиск…").font(font(9.0)).color(TEXT_MUTED));
                 }
-                ui.add_space(8.0);
+            });
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
                 if widgets::secondary_button_icon(ui, "Обновить", ph::ARROW_CLOCKWISE).clicked()
                 {
                     state.refresh();
@@ -149,6 +153,22 @@ fn toolbar(ui: &mut Ui, state: &mut EditorState) {
                     && let Err(err) = config::open_dir(&config::backups_dir())
                 {
                     tracing::warn!(%err, "failed to open backups");
+                }
+                ui.add_space(8.0);
+                ui.add_enabled_ui(!state.is_importing(), |ui| {
+                    if widgets::secondary_button_icon(ui, "Импорт .reg", ph::FILE_ARROW_DOWN)
+                        .clicked()
+                    {
+                        state.open_import_dialog();
+                    }
+                });
+                if widgets::secondary_button_icon(ui, "Заменить…", ph::SWAP).clicked() {
+                    state.open_replace();
+                }
+                if state.is_importing() {
+                    ui.add_space(6.0);
+                    ui.spinner();
+                    ui.label(RichText::new("Импорт…").font(font(9.0)).color(TEXT_MUTED));
                 }
             });
 
@@ -548,6 +568,158 @@ fn search_window(ctx: &egui::Context, state: &mut EditorState) {
     }
 }
 
+fn replace_window(ctx: &egui::Context, state: &mut EditorState) {
+    if !state.replace_open {
+        return;
+    }
+    let mut open = true;
+    egui::Window::new("Поиск и замена в реестре")
+        .id(egui::Id::new("registry-replace"))
+        .open(&mut open)
+        .default_width(780.0)
+        .max_height(620.0)
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            let scope = if state.selected.is_empty() {
+                format!("{} (весь улей)", state.hive.short())
+            } else {
+                registry_editor::full_path(state.hive, &state.selected)
+            };
+            ui.label(
+                RichText::new(format!("Область: {scope}"))
+                    .font(FontId::new(9.5, FontFamily::Monospace))
+                    .color(TEXT_MUTED),
+            );
+            ui.label(
+                RichText::new(
+                    "Заменяются только строковые значения (REG_SZ, REG_EXPAND_SZ, REG_MULTI_SZ). Поиск без учёта регистра.",
+                )
+                .font(font(9.0))
+                .color(TEXT_DIM),
+            );
+            ui.add_space(8.0);
+
+            let mut submit = false;
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Найти").font(font(9.0)).color(TEXT_DIM));
+                    let find = ui.add(
+                        egui::TextEdit::singleline(&mut state.replace_find)
+                            .desired_width(340.0),
+                    );
+                    submit = find.lost_focus()
+                        && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                });
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    ui.label(RichText::new("Заменить на").font(font(9.0)).color(TEXT_DIM));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut state.replace_with)
+                            .desired_width(340.0),
+                    );
+                });
+            });
+
+            ui.add_space(8.0);
+            let busy = state.is_replace_busy();
+            ui.horizontal(|ui| {
+                if widgets::secondary_button_icon(ui, "Найти", ph::MAGNIFYING_GLASS).clicked()
+                    || submit
+                {
+                    state.find_replacements();
+                }
+                if busy {
+                    ui.add_space(6.0);
+                    ui.spinner();
+                    ui.label(RichText::new("Выполняется…").font(font(9.0)).color(TEXT_MUTED));
+                }
+            });
+
+            if let Some(message) = &state.replace_message {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(&message.text)
+                        .font(font(9.0))
+                        .color(if message.is_error { ACCENT } else { SUCCESS }),
+                );
+            }
+
+            let hits = state.replace_hits.as_deref().unwrap_or_default();
+            if !hits.is_empty() {
+                ui.add_space(8.0);
+                widgets::line(ui);
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!("Совпадения: {}", hits.len()))
+                        .font(font_semibold(10.5))
+                        .color(TEXT),
+                );
+                ui.add_space(4.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("registry-replace-hits")
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for hit in hits.iter().take(200) {
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} · {}",
+                                    registry_editor::full_path(hit.hive, &hit.path),
+                                    registry_editor::display_value_name(&hit.value_name)
+                                ))
+                                .font(FontId::new(9.0, FontFamily::Monospace))
+                                .color(TEXT_MUTED),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} → {}",
+                                    shorten(&hit.before.replace('\n', " "), 84),
+                                    shorten(&hit.after.replace('\n', " "), 84)
+                                ))
+                                .font(font(8.5))
+                                .color(TEXT_DIM),
+                            );
+                            ui.add_space(3.0);
+                        }
+                        if hits.len() > 200 {
+                            ui.label(
+                                RichText::new(format!("…и ещё {} значений", hits.len() - 200))
+                                    .font(font(9.0))
+                                    .color(TEXT_DIM),
+                            );
+                        }
+                    });
+
+                ui.add_space(6.0);
+                ui.add(egui::Checkbox::new(
+                    &mut state.replace_ack,
+                    "Понимаю, что изменения применяются сразу; перед заменой создаётся .reg-бэкап.",
+                ));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if widgets::primary_button(
+                        ui,
+                        "Заменить всё",
+                        ph::SWAP,
+                        state.replace_ack && !busy,
+                    )
+                    .clicked()
+                    {
+                        state.replace_all();
+                    }
+                    ui.add_space(8.0);
+                    if widgets::secondary_button(ui, "Очистить").clicked() {
+                        state.replace_hits = None;
+                        state.replace_ack = false;
+                        state.replace_message = None;
+                    }
+                });
+            }
+        });
+    if !open {
+        state.close_replace();
+    }
+}
+
 fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
     let Some(mut dialog) = state.dialog.take() else {
         return;
@@ -704,10 +876,179 @@ fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
                     );
                     dialog_footer(ui, "Удалить раздел", &mut action);
                 }
+                EditorDialog::Import { preview, error } => {
+                    dialog_header(
+                        ui,
+                        ph::FILE_ARROW_DOWN,
+                        "Импорт .reg",
+                        "Существующие разделы сохраняются в .reg-бэкап; файл применяется через reg.exe.",
+                    );
+                    ui.add_space(12.0);
+                    if let Some(preview) = preview {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(&preview.file_name)
+                                    .font(FontId::new(11.0, FontFamily::Monospace))
+                                    .color(TEXT),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} · {} · разделов: {} · значений: {}",
+                                    format::bytes(preview.size),
+                                    preview.encoding,
+                                    preview.key_count(),
+                                    preview.value_count
+                                ))
+                                .font(font(9.0))
+                                .color(TEXT_MUTED),
+                            );
+                        });
+                        if preview.delete_count() > 0 {
+                            ui.add_space(4.0);
+                            widgets::inline_hint(
+                                ui,
+                                ph::WARNING,
+                                &format!(
+                                    "Файл удаляет разделы: {}.",
+                                    preview.delete_count()
+                                ),
+                                WARNING,
+                            );
+                        }
+                        if preview.skipped_keys > 0 {
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(format!(
+                                    "Пропущено разделов неподдерживаемых веток: {}.",
+                                    preview.skipped_keys
+                                ))
+                                .font(font(9.0))
+                                .color(TEXT_DIM),
+                            );
+                        }
+                        ui.add_space(8.0);
+                        widgets::line(ui);
+                        ui.add_space(6.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("registry-import-preview")
+                            .max_height(280.0)
+                            .show(ui, |ui| {
+                                for key in preview.keys.iter().take(120) {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} {}",
+                                            if key.delete { "−" } else { "+" },
+                                            registry_editor::full_path(key.hive, &key.path)
+                                        ))
+                                        .font(FontId::new(9.5, FontFamily::Monospace))
+                                        .color(if key.delete { ACCENT } else { TEXT }),
+                                    );
+                                    if key.delete {
+                                        ui.label(
+                                            RichText::new("Раздел будет удалён")
+                                                .font(font(8.5))
+                                                .color(TEXT_DIM),
+                                        );
+                                    }
+                                    for value in key.values.iter().take(8) {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "    {} = {} · {}",
+                                                registry_editor::display_value_name(&value.name),
+                                                registry_editor::type_label(value.ty),
+                                                shorten(&value.preview, 70)
+                                            ))
+                                            .font(FontId::new(8.5, FontFamily::Monospace))
+                                            .color(TEXT_DIM),
+                                        );
+                                    }
+                                    if key.values.len() > 8 {
+                                        ui.label(
+                                            RichText::new(format!(
+                                                "    …ещё {} значений",
+                                                key.values.len() - 8
+                                            ))
+                                            .font(font(8.5))
+                                            .color(TEXT_DIM),
+                                        );
+                                    }
+                                    ui.add_space(4.0);
+                                }
+                                if preview.keys.len() > 120 {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "…ещё {} разделов",
+                                            preview.keys.len() - 120
+                                        ))
+                                        .font(font(9.0))
+                                        .color(TEXT_DIM),
+                                    );
+                                }
+                                if preview.preview_truncated {
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "Показаны первые {} из {} значений; импорт затронет файл целиком.",
+                                            preview.value_previews(),
+                                            preview.value_count
+                                        ))
+                                        .font(font(9.0))
+                                        .color(TEXT_DIM),
+                                    );
+                                }
+                            });
+                        ui.add_space(8.0);
+                        widgets::inline_hint(
+                            ui,
+                            ph::WARNING,
+                            "Для импорта в HKLM и HKCR могут потребоваться права администратора.",
+                            WARNING,
+                        );
+                        dialog_error(ui, error);
+                        if state.is_importing() {
+                            ui.add_space(10.0);
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(
+                                    RichText::new("Импорт выполняется…")
+                                        .font(font(9.5))
+                                        .color(TEXT_MUTED),
+                                );
+                            });
+                        } else {
+                            dialog_footer(ui, "Импортировать", &mut action);
+                        }
+                    } else if let Some(error) = error {
+                        ui.label(
+                            RichText::new(error.as_str())
+                                .font(font(9.5))
+                                .color(ACCENT),
+                        );
+                        ui.add_space(14.0);
+                        ui.horizontal(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if widgets::secondary_button(ui, "Закрыть").clicked() {
+                                        action = DialogAction::Cancel;
+                                    }
+                                },
+                            );
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(
+                                RichText::new("Читаю файл и строю предпросмотр…")
+                                    .font(font(9.5))
+                                    .color(TEXT_MUTED),
+                            );
+                        });
+                    }
+                }
             }
         });
 
-    if action == DialogAction::None && modal.should_close() {
+    if action == DialogAction::None && modal.should_close() && !state.is_importing() {
         action = DialogAction::Cancel;
     }
 
