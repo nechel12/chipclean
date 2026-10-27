@@ -227,13 +227,18 @@ impl StartupState {
         if self.is_loading() {
             return;
         }
-        if self.tab == StartupTab::Run {
-            self.toggle_at(StartupTab::Run, index);
-            return;
-        }
 
         let pending = match self.tab {
-            StartupTab::Run => None,
+            StartupTab::Run => self.entries.get(index).map(|entry| PendingToggle {
+                tab: StartupTab::Run,
+                index,
+                identifier: entry.title.clone(),
+                title: entry.title.clone(),
+                command: entry.command.clone(),
+                enabling: !entry.enabled,
+                manual_restore: false,
+                system: false,
+            }),
             StartupTab::Tasks => self.tasks.get(index).map(|entry| PendingToggle {
                 tab: StartupTab::Tasks,
                 index,
@@ -268,7 +273,11 @@ impl StartupState {
         };
 
         let index = match pending.tab {
-            StartupTab::Run => Some(pending.index),
+            StartupTab::Run => self
+                .entries
+                .get(pending.index)
+                .filter(|entry| entry.title == pending.title && entry.command == pending.command)
+                .map(|_| pending.index),
             StartupTab::Tasks => self
                 .tasks
                 .iter()
@@ -366,5 +375,59 @@ impl StartupState {
             text,
             is_error: true,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::{
+        registry::RegistryHive,
+        startup::{StartupEntry, StartupEntryKind, StartupSource},
+    };
+
+    fn run_entry() -> StartupEntry {
+        StartupEntry {
+            title: "Test App".to_owned(),
+            command: r"C:\Test\app.exe".to_owned(),
+            source: StartupSource::HkcuRun,
+            enabled: true,
+            kind: StartupEntryKind::Registry {
+                hive: RegistryHive::CurrentUser,
+                key_path: r"Software\Microsoft\Windows\CurrentVersion\Run".to_owned(),
+                value_name: "Test App".to_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn run_toggle_requires_confirmation() {
+        let mut state = StartupState::new();
+        state.entries.push(run_entry());
+
+        state.request_toggle(0);
+
+        let pending = state.pending.as_ref().expect("pending toggle");
+        assert_eq!(pending.tab, StartupTab::Run);
+        assert!(!pending.enabling);
+        assert!(state.message.is_none());
+    }
+
+    #[test]
+    fn run_toggle_is_dropped_when_the_entry_changed() {
+        let mut state = StartupState::new();
+        state.entries.push(run_entry());
+        state.request_toggle(0);
+        state.entries[0].title = "Other".to_owned();
+
+        state.confirm_toggle();
+
+        assert!(state.pending.is_none());
+        assert!(
+            state
+                .message
+                .as_ref()
+                .is_some_and(|message| message.is_error)
+        );
     }
 }

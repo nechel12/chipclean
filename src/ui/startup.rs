@@ -239,7 +239,7 @@ fn summary_title(tab: StartupTab, total: usize) -> String {
 fn hint(tab: StartupTab) -> &'static str {
     match tab {
         StartupTab::Run => {
-            "Отключение можно отменить этим же переключателем. Для реестра создаётся .reg-бэкап."
+            "Каждое изменение подтверждается; отключение можно отменить этим же переключателем. Для реестра создаётся .reg-бэкап."
         }
         StartupTab::Tasks => {
             "Отключение задачи не останавливает уже запущенный экземпляр. Задача не удаляется."
@@ -299,11 +299,41 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
         return;
     };
     let mut action = ModalAction::None;
+    let run = pending.tab == StartupTab::Run;
     let service = pending.tab == StartupTab::Services;
     let color = if pending.enabling && !pending.manual_restore {
         SUCCESS
     } else {
         WARNING
+    };
+    let icon = if pending.manual_restore || service {
+        ph::GEAR_SIX
+    } else if run {
+        ph::ROCKET_LAUNCH
+    } else {
+        ph::CALENDAR_CHECK
+    };
+    let title = if pending.manual_restore {
+        "Вернуть службу в ручной запуск?"
+    } else if pending.enabling {
+        match pending.tab {
+            StartupTab::Run => "Включить автозагрузку?",
+            StartupTab::Tasks => "Включить задачу?",
+            StartupTab::Services => "Включить службу?",
+        }
+    } else {
+        match pending.tab {
+            StartupTab::Run => "Отключить автозагрузку?",
+            StartupTab::Tasks => "Отключить задачу?",
+            StartupTab::Services => "Отключить службу?",
+        }
+    };
+    let subtitle = if pending.manual_restore {
+        "Служба была отключена вне ChipClean; автозапуск не включится."
+    } else if pending.enabling {
+        "Автозапуск будет восстановлен."
+    } else {
+        "Автозапуск будет отключён; отмена доступна этим же переключателем."
     };
 
     let screen = ctx.content_rect();
@@ -338,31 +368,7 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
         ui.set_min_width(540.0);
         ui.set_max_width(620.0);
 
-        modal_header(
-            ui,
-            if service { ph::GEAR_SIX } else { ph::CALENDAR_CHECK },
-            if pending.manual_restore {
-                "Вернуть службу в ручной запуск?"
-            } else if pending.enabling {
-                if service {
-                    "Включить службу?"
-                } else {
-                    "Включить задачу?"
-                }
-            } else if service {
-                "Отключить службу?"
-            } else {
-                "Отключить задачу?"
-            },
-            if pending.manual_restore {
-                "Служба была отключена вне ChipClean; автозапуск не включится."
-            } else if pending.enabling {
-                "Автозапуск будет восстановлен."
-            } else {
-                "Автозапуск будет отключён; отмена доступна этим же переключателем."
-            },
-            color,
-        );
+        modal_header(ui, icon, title, subtitle, color);
 
         ui.add_space(14.0);
         Frame::new()
@@ -396,6 +402,8 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
             "Служба останется остановленной. Тип запуска станет «Вручную»: её сможет запустить Windows или приложение, но автоматически при старте системы она запускаться не будет."
         } else if service {
             "Служба может быть нужна Windows или другому приложению. Работающая служба продолжит работу до остановки или перезагрузки."
+        } else if run {
+            "Запись может запускать обновления или фоновые компоненты при входе в систему. Для реестра создаётся .reg-бэкап, файл папки перемещается в карантин."
         } else {
             "Задача может выполнять обновления или обслуживание. Уже запущенный экземпляр не останавливается."
         };
@@ -427,6 +435,8 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
                         "В ручной запуск"
                     } else if pending.enabling {
                         "Включить"
+                    } else if run {
+                        "Отключить автозагрузку"
                     } else if service {
                         "Отключить службу"
                     } else {
