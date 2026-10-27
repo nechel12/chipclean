@@ -355,9 +355,9 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
 }
 
 fn confirmation_modal(ctx: &egui::Context, state: &mut CommunityState) {
-    let (files, bytes, registry) = state.selected_stats();
+    let (files, bytes, registry) = state.pending_stats();
     let selected: Vec<(DataTarget, Vec<String>, u64)> = state
-        .selected_targets()
+        .pending_targets()
         .into_iter()
         .map(|target| {
             let (items, count) = state
