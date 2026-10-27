@@ -10,7 +10,7 @@ use crate::{
     app::Page,
     config::Settings,
     core::{
-        model::{CategoryId, CleanupCategory, Group, Risk},
+        model::{CategoryId, CleanupCategory, Group},
         scanner::ScanOutcome,
         state::{CleanState, CleanupState, ConfirmStage, ScanState},
     },
@@ -274,11 +274,20 @@ fn summary(ui: &mut Ui, cleanup: &mut CleanupState, settings: &mut Settings) {
                     );
                 }
 
+                if cleanup.selected_has_max_only() && !settings.max_cleanup {
+                    widgets::inline_hint(
+                        ui,
+                        ph::WARNING,
+                        "«Windows.old» и «Загруженные обновления» потребуют отдельного подтверждения.",
+                        WARNING,
+                    );
+                }
+
                 if settings.max_cleanup {
                     widgets::inline_hint(
                         ui,
                         ph::WARNING,
-                        "Максимальная чистка выбирает все разделы, включая «Загрузки» и корзину.",
+                        "Максимальная чистка выбирает все разделы, включая «Загрузки», корзину, Windows.old и обновления.",
                         WARNING,
                     );
                 }
@@ -491,11 +500,14 @@ fn confirmation_modal(ctx: &egui::Context, cleanup: &mut CleanupState, downloads
         .filter(|category| category.extra_confirmation)
         .cloned()
         .collect();
+    let advanced_categories: Vec<_> = categories
+        .iter()
+        .filter(|category| category.max_only)
+        .cloned()
+        .collect();
     let (total_bytes, total_files, total_errors) = cleanup.cleanable_totals();
     let has_sensitive = !sensitive_categories.is_empty();
-    let has_advanced = categories
-        .iter()
-        .any(|category| category.risk == Risk::Advanced);
+    let has_advanced = !advanced_categories.is_empty();
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Action {
@@ -571,7 +583,7 @@ fn confirmation_modal(ctx: &egui::Context, cleanup: &mut CleanupState, downloads
                     warning_box(
                         ui,
                         WARNING,
-                        "В выборке есть расширенные разделы: обновления Windows и Windows.old. Убедитесь, что они нужны.",
+                        "В выборке есть расширенные разделы: загруженные обновления и Windows.old. Для них потребуется отдельное подтверждение.",
                     );
                 }
 
@@ -597,13 +609,10 @@ fn confirmation_modal(ctx: &egui::Context, cleanup: &mut CleanupState, downloads
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
-                            let label = if has_sensitive {
-                                "Продолжить"
-                            } else {
-                                "Очистить"
-                            };
+                            let needs_ack = has_sensitive || has_advanced;
+                            let label = if needs_ack { "Продолжить" } else { "Очистить" };
                             if widgets::primary_button(ui, label, ph::TRASH, true).clicked() {
-                                action = if has_sensitive {
+                                action = if needs_ack {
                                     Action::Next
                                 } else {
                                     Action::Start
@@ -693,14 +702,113 @@ fn confirmation_modal(ctx: &egui::Context, cleanup: &mut CleanupState, downloads
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
+                            let label = if has_advanced {
+                                "Продолжить"
+                            } else {
+                                "Удалить"
+                            };
                             if widgets::primary_button(
                                 ui,
-                                "Удалить",
+                                label,
                                 ph::TRASH,
                                 cleanup.sensitive_ack,
                             )
                             .clicked()
                                 && cleanup.sensitive_ack
+                            {
+                                action = if has_advanced {
+                                    Action::Next
+                                } else {
+                                    Action::Start
+                                };
+                            }
+                            ui.add_space(8.0);
+                            if widgets::secondary_button(ui, "Назад").clicked() {
+                                action = Action::Back;
+                            }
+                        },
+                    );
+                });
+            }
+            ConfirmStage::Advanced => {
+                modal_header(
+                    ui,
+                    ph::WARNING,
+                    "Расширенные разделы",
+                    "Windows.old и загруженные обновления удаляются без возможности отката.",
+                    WARNING,
+                );
+
+                let mut notes = Vec::new();
+                if advanced_categories
+                    .iter()
+                    .any(|category| category.id == CategoryId::WindowsOld)
+                {
+                    notes.push(
+                        "Windows.old хранит предыдущую версию системы: после удаления откат Windows станет невозможен."
+                            .to_owned(),
+                    );
+                }
+                if advanced_categories
+                    .iter()
+                    .any(|category| category.id == CategoryId::UpdateCache)
+                {
+                    notes.push(
+                        "Загруженные обновления будут скачаны заново при следующей проверке."
+                            .to_owned(),
+                    );
+                }
+
+                ui.add_space(14.0);
+                ui.label(
+                    RichText::new(notes.join(" "))
+                        .font(font(10.5))
+                        .color(TEXT_MUTED),
+                );
+
+                ui.add_space(12.0);
+                Frame::new()
+                    .fill(BG)
+                    .corner_radius(CornerRadius::same(10))
+                    .inner_margin(Margin::same(6))
+                    .show(ui, |ui| {
+                        for category in &advanced_categories {
+                            let outcome = cleanup
+                                .results
+                                .get(&category.id)
+                                .copied()
+                                .unwrap_or_default();
+                            modal_category_row(ui, category, &outcome);
+                        }
+                    });
+
+                ui.add_space(10.0);
+                warning_box(
+                    ui,
+                    ACCENT,
+                    "Это действие нельзя отменить. Файлы удаляются безвозвратно и не попадут в корзину.",
+                );
+
+                ui.add_space(10.0);
+                widgets::confirmation_checkbox(
+                    ui,
+                    &mut cleanup.advanced_ack,
+                    "Я понимаю, что откат Windows и повторная загрузка обновлений будут недоступны",
+                );
+
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if widgets::primary_button(
+                                ui,
+                                "Удалить",
+                                ph::TRASH,
+                                cleanup.advanced_ack,
+                            )
+                            .clicked()
+                                && cleanup.advanced_ack
                             {
                                 action = Action::Start;
                             }
@@ -723,18 +831,45 @@ fn confirmation_modal(ctx: &egui::Context, cleanup: &mut CleanupState, downloads
     match action {
         Action::None => {}
         Action::Cancel => cleanup.cancel_cleanup_confirmation(),
-        Action::Back => {
-            cleanup.pending_cleanup = Some(ConfirmStage::Review);
-            cleanup.sensitive_ack = false;
-        }
-        Action::Next => {
-            cleanup.pending_cleanup = Some(ConfirmStage::Sensitive);
-            cleanup.sensitive_ack = false;
-        }
+        Action::Back => match stage {
+            ConfirmStage::Review => {}
+            ConfirmStage::Sensitive => {
+                cleanup.pending_cleanup = Some(ConfirmStage::Review);
+                cleanup.sensitive_ack = false;
+                cleanup.advanced_ack = false;
+            }
+            ConfirmStage::Advanced => {
+                cleanup.pending_cleanup = Some(if has_sensitive {
+                    ConfirmStage::Sensitive
+                } else {
+                    ConfirmStage::Review
+                });
+                cleanup.advanced_ack = false;
+                if !has_sensitive {
+                    cleanup.sensitive_ack = false;
+                }
+            }
+        },
+        Action::Next => match stage {
+            ConfirmStage::Review => {
+                cleanup.pending_cleanup = Some(if has_sensitive {
+                    ConfirmStage::Sensitive
+                } else {
+                    ConfirmStage::Advanced
+                });
+                cleanup.sensitive_ack = false;
+                cleanup.advanced_ack = false;
+            }
+            ConfirmStage::Sensitive => {
+                cleanup.pending_cleanup = Some(ConfirmStage::Advanced);
+                cleanup.advanced_ack = false;
+            }
+            ConfirmStage::Advanced => {}
+        },
         Action::Start => {
-            let allow_sensitive = stage == ConfirmStage::Sensitive && cleanup.sensitive_ack;
-
-            if let Err(err) = cleanup.start_clean(downloads_days, allow_sensitive) {
+            if let Err(err) =
+                cleanup.start_clean(downloads_days, cleanup.sensitive_ack, cleanup.advanced_ack)
+            {
                 cleanup.pending_cleanup = None;
                 cleanup.clean = CleanState::Failed(err);
             }

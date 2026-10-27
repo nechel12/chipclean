@@ -66,6 +66,7 @@ pub enum CleanState {
 pub enum ConfirmStage {
     Review,
     Sensitive,
+    Advanced,
 }
 
 pub struct CleanupState {
@@ -78,6 +79,7 @@ pub struct CleanupState {
     pub clean_cancel_requested: bool,
     pub pending_cleanup: Option<ConfirmStage>,
     pub sensitive_ack: bool,
+    pub advanced_ack: bool,
     selection_before_max: Option<BTreeSet<CategoryId>>,
     cancel: Arc<AtomicBool>,
     rx: Option<Receiver<ScanEvent>>,
@@ -116,6 +118,7 @@ impl CleanupState {
             clean_cancel_requested: false,
             pending_cleanup: None,
             sensitive_ack: false,
+            advanced_ack: false,
             selection_before_max,
             cancel: Arc::new(AtomicBool::new(false)),
             rx: None,
@@ -164,6 +167,7 @@ impl CleanupState {
         self.clean = CleanState::Idle;
         self.pending_cleanup = None;
         self.sensitive_ack = false;
+        self.advanced_ack = false;
         self.cancel_requested = false;
         self.clean_cancel_requested = false;
         self.cancel = Arc::new(AtomicBool::new(false));
@@ -223,6 +227,12 @@ impl CleanupState {
         self.categories
             .iter()
             .any(|category| self.selected.contains(&category.id) && category.extra_confirmation)
+    }
+
+    pub fn selected_has_max_only(&self) -> bool {
+        self.categories
+            .iter()
+            .any(|category| self.selected.contains(&category.id) && category.max_only)
     }
 
     pub fn category(&self, id: CategoryId) -> Option<&CleanupCategory> {
@@ -297,6 +307,12 @@ impl CleanupState {
             .any(|category| category.extra_confirmation)
     }
 
+    pub fn cleanable_has_max_only(&self) -> bool {
+        self.cleanable_categories()
+            .iter()
+            .any(|category| category.max_only)
+    }
+
     pub fn request_cleanup(&mut self) -> bool {
         if !self.can_clean() {
             return false;
@@ -304,18 +320,21 @@ impl CleanupState {
 
         self.pending_cleanup = Some(ConfirmStage::Review);
         self.sensitive_ack = false;
+        self.advanced_ack = false;
         true
     }
 
     pub fn cancel_cleanup_confirmation(&mut self) {
         self.pending_cleanup = None;
         self.sensitive_ack = false;
+        self.advanced_ack = false;
     }
 
     pub fn start_clean(
         &mut self,
         downloads_days: u32,
         allow_sensitive: bool,
+        allow_max_only: bool,
     ) -> Result<(), String> {
         if !self.can_clean() {
             return Err("Сначала завершите сканирование выбранных разделов.".to_owned());
@@ -323,7 +342,15 @@ impl CleanupState {
 
         if self.cleanable_has_extra_confirmation() && !allow_sensitive {
             return Err(
-                "Для «Загрузок» и корзины требуется дополнительное подтверждение.".to_owned(),
+                "Для «Загрузок», корзины и карантина требуется дополнительное подтверждение."
+                    .to_owned(),
+            );
+        }
+
+        if self.cleanable_has_max_only() && !allow_max_only {
+            return Err(
+                "Для Windows.old и загруженных обновлений требуется отдельное подтверждение."
+                    .to_owned(),
             );
         }
 
@@ -334,6 +361,7 @@ impl CleanupState {
 
         self.pending_cleanup = None;
         self.sensitive_ack = false;
+        self.advanced_ack = false;
         self.clean_cancel_requested = false;
         self.clean_cancel = Arc::new(AtomicBool::new(false));
         self.clean = CleanState::Cleaning {
@@ -592,5 +620,36 @@ mod tests {
         let state = CleanupState::new(&settings);
 
         assert_eq!(state.selected_count(), state.categories.len());
+    }
+
+    #[test]
+    fn max_only_sections_need_a_separate_acknowledgement() {
+        let settings = Settings::default();
+        let mut state = CleanupState::new(&settings);
+        state.selected = [CategoryId::UpdateCache].into_iter().collect();
+        state.results.insert(
+            CategoryId::UpdateCache,
+            ScanOutcome {
+                bytes: 10,
+                files: 1,
+                errors: 0,
+            },
+        );
+        state.scan = ScanState::Done {
+            bytes: 10,
+            files: 1,
+            errors: 0,
+            elapsed: Duration::ZERO,
+            cancelled: false,
+        };
+
+        assert!(state.cleanable_has_max_only());
+
+        state.advanced_ack = true;
+        assert!(state.request_cleanup());
+        assert!(!state.advanced_ack);
+
+        let err = state.start_clean(7, false, false).unwrap_err();
+        assert!(err.contains("Windows.old"));
     }
 }
