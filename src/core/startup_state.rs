@@ -25,6 +25,7 @@ pub struct PendingToggle {
     pub title: String,
     pub command: String,
     pub enabling: bool,
+    pub manual_restore: bool,
     pub system: bool,
 }
 
@@ -240,6 +241,7 @@ impl StartupState {
                 title: entry.title.clone(),
                 command: entry.path.clone(),
                 enabling: !entry.enabled,
+                manual_restore: false,
                 system: entry.system,
             }),
             StartupTab::Services => self.services.get(index).map(|entry| PendingToggle {
@@ -249,6 +251,7 @@ impl StartupState {
                 title: entry.title.clone(),
                 command: entry.command.clone(),
                 enabling: !entry.enabled,
+                manual_restore: !entry.enabled && !entry.managed,
                 system: entry.system,
             }),
         };

@@ -245,7 +245,7 @@ fn hint(tab: StartupTab) -> &'static str {
             "Отключение задачи не останавливает уже запущенный экземпляр. Задача не удаляется."
         }
         StartupTab::Services => {
-            "Меняется только тип запуска; работающая служба продолжит работу до перезагрузки. Службы, отключённые вне ChipClean, скрыты."
+            "Меняется только тип запуска; работающая служба продолжит работу до перезагрузки. Службы, отключённые вне ChipClean, отмечены предупреждением и переводятся только в ручной запуск."
         }
     }
 }
@@ -300,7 +300,11 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
     };
     let mut action = ModalAction::None;
     let service = pending.tab == StartupTab::Services;
-    let color = if pending.enabling { SUCCESS } else { WARNING };
+    let color = if pending.enabling && !pending.manual_restore {
+        SUCCESS
+    } else {
+        WARNING
+    };
 
     let screen = ctx.content_rect();
     egui::Area::new(egui::Id::new("startup-confirm-backdrop"))
@@ -337,7 +341,9 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
         modal_header(
             ui,
             if service { ph::GEAR_SIX } else { ph::CALENDAR_CHECK },
-            if pending.enabling {
+            if pending.manual_restore {
+                "Вернуть службу в ручной запуск?"
+            } else if pending.enabling {
                 if service {
                     "Включить службу?"
                 } else {
@@ -348,7 +354,9 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
             } else {
                 "Отключить задачу?"
             },
-            if pending.enabling {
+            if pending.manual_restore {
+                "Служба была отключена вне ChipClean; автозапуск не включится."
+            } else if pending.enabling {
                 "Автозапуск будет восстановлен."
             } else {
                 "Автозапуск будет отключён; отмена доступна этим же переключателем."
@@ -384,7 +392,9 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
             });
 
         ui.add_space(10.0);
-        let warning = if service {
+        let warning = if pending.manual_restore {
+            "Служба останется остановленной. Тип запуска станет «Вручную»: её сможет запустить Windows или приложение, но автоматически при старте системы она запускаться не будет."
+        } else if service {
             "Служба может быть нужна Windows или другому приложению. Работающая служба продолжит работу до остановки или перезагрузки."
         } else {
             "Задача может выполнять обновления или обслуживание. Уже запущенный экземпляр не останавливается."
@@ -413,7 +423,9 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if widgets::primary_button(
                     ui,
-                    if pending.enabling {
+                    if pending.manual_restore {
+                        "В ручной запуск"
+                    } else if pending.enabling {
                         "Включить"
                     } else if service {
                         "Отключить службу"
@@ -523,6 +535,7 @@ fn startup_row(ui: &mut Ui, entry: &StartupEntry, index: usize) -> bool {
         command,
         entry.enabled,
         entry.source.short_label(),
+        false,
         entry_icon(entry),
         if entry.enabled {
             source_color(entry.source)
@@ -551,6 +564,7 @@ fn task_row(ui: &mut Ui, entry: &TaskEntry, index: usize) -> bool {
         } else {
             "Задача"
         },
+        false,
         if entry.enabled {
             ph::CALENDAR_CHECK
         } else {
@@ -563,8 +577,11 @@ fn task_row(ui: &mut Ui, entry: &TaskEntry, index: usize) -> bool {
 
 fn service_row(ui: &mut Ui, entry: &ServiceEntry, index: usize) -> bool {
     let command = format!("{} · {}", entry.status, entry.command);
+    let manual_restore = !entry.enabled && !entry.managed;
     let source = if entry.enabled {
         entry.start_label.as_str()
+    } else if manual_restore {
+        "Вне ChipClean"
     } else {
         "Отключена"
     };
@@ -576,12 +593,19 @@ fn service_row(ui: &mut Ui, entry: &ServiceEntry, index: usize) -> bool {
         &command,
         entry.enabled,
         source,
+        manual_restore,
         if entry.enabled {
             ph::GEAR_SIX
         } else {
             ph::PROHIBIT
         },
-        if entry.enabled { ACCENT } else { TEXT_DIM },
+        if entry.enabled {
+            ACCENT
+        } else if manual_restore {
+            WARNING
+        } else {
+            TEXT_DIM
+        },
         &format!(
             "{}\n{} · {}\n{}",
             entry.name, entry.status, entry.start_label, entry.command
@@ -598,6 +622,7 @@ fn toggle_row(
     command: &str,
     enabled: bool,
     source: &str,
+    manual_restore: bool,
     icon: &str,
     accent: Color32,
     tooltip: &str,
@@ -660,12 +685,18 @@ fn toggle_row(
         Align2::RIGHT_CENTER,
         source,
         font(9.0),
-        if enabled { accent } else { TEXT_DIM },
+        if enabled || manual_restore {
+            accent
+        } else {
+            TEXT_DIM
+        },
     );
 
     let switch_response = switch_response
         .on_hover_text(if enabled {
             "Отключить автозапуск"
+        } else if manual_restore {
+            "Вернуть в ручной запуск"
         } else {
             "Включить автозапуск"
         })

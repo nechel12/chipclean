@@ -5,16 +5,20 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use windows::{
-    Win32::System::Services::{
-        ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle,
-        ENUM_SERVICE_STATUS_PROCESSW, ENUM_SERVICE_TYPE, EnumServicesStatusExW, OpenSCManagerW,
-        OpenServiceW, QUERY_SERVICE_CONFIGW, QueryServiceConfig2W, QueryServiceConfigW,
-        SC_ENUM_PROCESS_INFO, SC_HANDLE, SC_MANAGER_CONNECT, SC_MANAGER_ENUMERATE_SERVICE,
-        SERVICE_AUTO_START, SERVICE_CHANGE_CONFIG, SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
-        SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DISABLED, SERVICE_ERROR, SERVICE_NO_CHANGE,
-        SERVICE_QUERY_CONFIG, SERVICE_START_TYPE, SERVICE_STATE_ALL, SERVICE_WIN32,
+    Win32::{
+        Foundation::ERROR_MORE_DATA,
+        System::Services::{
+            ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle,
+            ENUM_SERVICE_STATUS_PROCESSW, ENUM_SERVICE_TYPE, EnumServicesStatusExW, OpenSCManagerW,
+            OpenServiceW, QUERY_SERVICE_CONFIGW, QueryServiceConfig2W, QueryServiceConfigW,
+            SC_ENUM_PROCESS_INFO, SC_HANDLE, SC_MANAGER_CONNECT, SC_MANAGER_ENUMERATE_SERVICE,
+            SERVICE_AUTO_START, SERVICE_CHANGE_CONFIG, SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
+            SERVICE_DELAYED_AUTO_START_INFO, SERVICE_DEMAND_START, SERVICE_DISABLED, SERVICE_ERROR,
+            SERVICE_NO_CHANGE, SERVICE_QUERY_CONFIG, SERVICE_START_TYPE, SERVICE_STATE_ALL,
+            SERVICE_WIN32,
+        },
     },
-    core::{BOOL, PCWSTR, PWSTR},
+    core::{BOOL, HRESULT, PCWSTR, PWSTR},
 };
 
 use crate::{config, core::journal::Journal};
@@ -64,7 +68,7 @@ pub fn scan_services() -> Result<Vec<ServiceEntry>> {
     let scm = open_scm()?;
     let store = load_store(&DisabledServiceStore::path())?;
     let mut entries = Vec::new();
-    let mut active_names = Vec::new();
+    let mut seen_names = Vec::new();
 
     for (name, display_name, state) in enumerate_services(&scm)? {
         let Ok(service) = open_service(&scm, &name, SERVICE_QUERY_CONFIG) else {
@@ -73,11 +77,14 @@ pub fn scan_services() -> Result<Vec<ServiceEntry>> {
         let Ok(config) = query_config(service.0) else {
             continue;
         };
-        if config.start_type == SERVICE_DISABLED.0 {
-            continue;
-        }
 
-        active_names.push(name.clone());
+        let disabled = config.start_type == SERVICE_DISABLED.0;
+        let managed = disabled
+            && store
+                .entries
+                .iter()
+                .any(|entry| entry.name.eq_ignore_ascii_case(&name));
+        seen_names.push(name.clone());
         entries.push(ServiceEntry {
             title: if display_name.trim().is_empty() {
                 if config.display_name.trim().is_empty() {
@@ -90,16 +97,25 @@ pub fn scan_services() -> Result<Vec<ServiceEntry>> {
             },
             name,
             command: config.binary_path.clone(),
-            status: service_state_label(state).to_owned(),
+            status: if disabled {
+                if managed {
+                    "Отключена ChipClean"
+                } else {
+                    "Отключена вне ChipClean"
+                }
+            } else {
+                service_state_label(state)
+            }
+            .to_owned(),
             start_label: start_type_label(config.start_type, config.delayed).to_owned(),
-            enabled: true,
+            enabled: !disabled,
             system: is_system_path(&config.binary_path),
-            managed: false,
+            managed,
         });
     }
 
     for disabled in store.entries {
-        if active_names
+        if seen_names
             .iter()
             .any(|name| name.eq_ignore_ascii_case(&disabled.name))
         {
@@ -130,8 +146,10 @@ pub fn scan_services() -> Result<Vec<ServiceEntry>> {
 pub fn toggle_service(entry: &ServiceEntry) -> Result<String> {
     if entry.enabled {
         disable_service(entry)
-    } else {
+    } else if entry.managed {
         enable_service(entry)
+    } else {
+        restore_manual_start(entry)
     }
 }
 
@@ -229,6 +247,31 @@ fn enable_service(entry: &ServiceEntry) -> Result<String> {
     Ok("Автозапуск службы восстановлен.".to_owned())
 }
 
+fn restore_manual_start(entry: &ServiceEntry) -> Result<String> {
+    let scm = open_scm()?;
+    let service = open_service(
+        &scm,
+        &entry.name,
+        SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG,
+    )?;
+    let config = query_config(service.0)?;
+    if config.start_type != SERVICE_DISABLED.0 {
+        bail!("Служба уже не отключена; обновите список.");
+    }
+
+    change_start_type(service.0, SERVICE_DEMAND_START, false)?;
+
+    journal(json!({
+        "ts": Utc::now().to_rfc3339(),
+        "event": "service_restored_manual",
+        "name": entry.name,
+        "display": entry.title,
+        "previous_start_type": config.start_type,
+    }));
+
+    Ok("Служба переведена в ручной запуск. Автозапуск не включён.".to_owned())
+}
+
 fn open_scm() -> Result<ScmHandle> {
     let handle = unsafe {
         OpenSCManagerW(
@@ -249,44 +292,71 @@ fn open_service(scm: &ScmHandle, name: &str, access: u32) -> Result<ServiceHandl
 }
 
 fn enumerate_services(scm: &ScmHandle) -> Result<Vec<(String, String, u32)>> {
-    let mut buffer = vec![0_u64; 256 * 1024 / 8];
-    let mut needed = 0_u32;
-    let mut returned = 0_u32;
+    const MAX_BUFFER: usize = 64 * 1024 * 1024;
+    let mut buffer_bytes: usize = 256 * 1024;
     let mut resume = 0_u32;
-    let bytes =
-        unsafe { std::slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 8) };
+    let mut services = Vec::new();
 
-    unsafe {
-        EnumServicesStatusExW(
-            scm.0,
-            SC_ENUM_PROCESS_INFO,
-            SERVICE_WIN32,
-            SERVICE_STATE_ALL,
-            Some(bytes),
-            &mut needed,
-            &mut returned,
-            Some(&mut resume),
-            PCWSTR::null(),
-        )
-    }
-    .context("не удалось перечислить службы")?;
+    loop {
+        let mut buffer = vec![0_u64; buffer_bytes.div_ceil(8)];
+        let mut needed = 0_u32;
+        let mut returned = 0_u32;
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len() * 8)
+        };
 
-    let mut services = Vec::with_capacity(returned as usize);
-    let items = buffer.as_ptr() as *const ENUM_SERVICE_STATUS_PROCESSW;
-    for index in 0..returned as usize {
-        let item = unsafe { &*items.add(index) };
-        let name = pwstr_to_string(item.lpServiceName);
-        if name.is_empty() {
+        let result = unsafe {
+            EnumServicesStatusExW(
+                scm.0,
+                SC_ENUM_PROCESS_INFO,
+                SERVICE_WIN32,
+                SERVICE_STATE_ALL,
+                Some(bytes),
+                &mut needed,
+                &mut returned,
+                Some(&mut resume),
+                PCWSTR::null(),
+            )
+        };
+
+        if let Err(err) = result {
+            if err.code() != HRESULT::from_win32(ERROR_MORE_DATA.0) {
+                return Err(err).context("не удалось перечислить службы");
+            }
+            buffer_bytes = next_enum_buffer_size(buffer_bytes, needed);
+            if buffer_bytes > MAX_BUFFER {
+                bail!("перечисление служб требует буфер больше 64 МиБ");
+            }
             continue;
         }
-        services.push((
-            name,
-            pwstr_to_string(item.lpDisplayName),
-            item.ServiceStatusProcess.dwCurrentState.0,
-        ));
-    }
 
-    Ok(services)
+        let items = buffer.as_ptr() as *const ENUM_SERVICE_STATUS_PROCESSW;
+        for index in 0..returned as usize {
+            let item = unsafe { &*items.add(index) };
+            let name = pwstr_to_string(item.lpServiceName);
+            if name.is_empty() {
+                continue;
+            }
+            services.push((
+                name,
+                pwstr_to_string(item.lpDisplayName),
+                item.ServiceStatusProcess.dwCurrentState.0,
+            ));
+        }
+
+        if resume == 0 {
+            return Ok(services);
+        }
+    }
+}
+
+fn next_enum_buffer_size(current: usize, needed: u32) -> usize {
+    let required = needed as usize;
+    if required > current {
+        required
+    } else {
+        current.saturating_mul(2)
+    }
 }
 
 fn query_config(service: SC_HANDLE) -> Result<ServiceConfig> {
@@ -507,6 +577,14 @@ mod tests {
         assert_eq!(start_type_label(3, false), "Вручную");
         assert_eq!(service_state_label(SERVICE_RUNNING.0), "Работает");
         assert_eq!(service_state_label(SERVICE_STOPPED.0), "Остановлена");
+    }
+
+    #[test]
+    fn enumeration_buffer_grows_on_more_data() {
+        assert_eq!(next_enum_buffer_size(256 * 1024, 300 * 1024), 300 * 1024);
+        assert_eq!(next_enum_buffer_size(256 * 1024, 0), 512 * 1024);
+        assert_eq!(next_enum_buffer_size(256 * 1024, 1024), 512 * 1024);
+        assert_eq!(next_enum_buffer_size(4, 4), 8);
     }
 
     #[test]
