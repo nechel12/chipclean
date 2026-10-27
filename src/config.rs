@@ -67,6 +67,14 @@ pub fn startup_quarantine_dir() -> PathBuf {
     log_dir().join("startup-disabled")
 }
 
+pub fn traces_store_path() -> PathBuf {
+    log_dir().join("traces-quarantine.json")
+}
+
+pub fn traces_quarantine_dir() -> PathBuf {
+    log_dir().join("traces-quarantine")
+}
+
 pub fn load() -> Settings {
     let path = settings_path();
     let Ok(raw) = fs::read_to_string(&path) else {

@@ -3,6 +3,7 @@ use crate::{
     core::registry_state::RegistryState,
     core::startup_state::StartupState,
     core::state::CleanupState,
+    core::traces_state::TracesState,
     core::uninstall_state::UninstallState,
     theme, ui, win,
 };
@@ -12,6 +13,7 @@ pub enum Page {
     Cleanup,
     Registry,
     Startup,
+    Traces,
     Programs,
     Settings,
 }
@@ -22,6 +24,7 @@ impl Page {
             Self::Cleanup => "Очистка",
             Self::Registry => "Реестр",
             Self::Startup => "Автозагрузка",
+            Self::Traces => "Следы",
             Self::Programs => "Программы",
             Self::Settings => "Настройки",
         }
@@ -32,6 +35,7 @@ impl Page {
             Self::Cleanup => "Очистка системы",
             Self::Registry => "Реестр",
             Self::Startup => "Автозагрузка",
+            Self::Traces => "Следы программ",
             Self::Programs => "Программы",
             Self::Settings => "Настройки",
         }
@@ -44,6 +48,7 @@ impl Page {
                 "Безопасная проверка реестра и обязательный .reg-бэкап перед изменениями."
             }
             Self::Startup => "Реестр Run/RunOnce и папки «Автозагрузка»: обратимое отключение.",
+            Self::Traces => "Битые ярлыки и осиротевшие папки программ: удаление в карантин.",
             Self::Programs => "Установленные программы и запуск их штатных деинсталляторов.",
             Self::Settings => "Правила очистки, расположение журналов и сведения о сборке.",
         }
@@ -62,6 +67,7 @@ pub struct ChipCleanApp {
     pub cleanup: CleanupState,
     pub registry: RegistryState,
     pub startup: StartupState,
+    pub traces: TracesState,
     pub programs: UninstallState,
     pub disk: Option<win::disk::DiskSpace>,
     pub elevated: bool,
@@ -76,6 +82,7 @@ impl ChipCleanApp {
         let cleanup = CleanupState::new(&settings);
         let registry = RegistryState::new();
         let startup = StartupState::new();
+        let traces = TracesState::new();
         let programs = UninstallState::new();
 
         Self {
@@ -84,6 +91,7 @@ impl ChipCleanApp {
             cleanup,
             registry,
             startup,
+            traces,
             programs,
             disk: win::disk::system_drive_space().ok(),
             elevated: win::elevation::is_elevated(),
@@ -141,11 +149,13 @@ impl eframe::App for ChipCleanApp {
         self.cleanup.poll_clean();
         self.registry.poll_scan();
         self.registry.poll_clean();
+        self.traces.poll();
 
         if self.cleanup.is_scanning()
             || self.cleanup.is_cleaning()
             || self.registry.is_scanning()
             || self.registry.is_cleaning()
+            || self.traces.is_scanning()
         {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
@@ -166,6 +176,7 @@ impl eframe::App for ChipCleanApp {
                 Page::Cleanup => ui::cleanup::show(ui, &mut self.cleanup, &mut self.settings),
                 Page::Registry => ui::registry::show(ui, &mut self.registry),
                 Page::Startup => ui::startup::show(ui, &mut self.startup),
+                Page::Traces => ui::traces::show(ui, &mut self.traces),
                 Page::Programs => ui::uninstall::show(ui, &mut self.programs),
                 Page::Settings => ui::settings::show(ui, &mut self.settings),
             });

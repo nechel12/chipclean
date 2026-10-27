@@ -5,5 +5,6 @@ pub mod registry;
 pub mod settings;
 pub mod sidebar;
 pub mod startup;
+pub mod traces;
 pub mod uninstall;
 pub mod widgets;
