@@ -16,6 +16,8 @@ use crate::core::journal::Journal;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+pub const KEY_STATS_LIMIT: usize = 5_000;
+
 pub const REG_SZ: u32 = 1;
 pub const REG_EXPAND_SZ: u32 = 2;
 pub const REG_BINARY: u32 = 3;
@@ -87,6 +89,13 @@ pub struct SearchHit {
     pub path: String,
     pub value_name: Option<String>,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KeyStats {
+    pub subkeys: usize,
+    pub values: usize,
+    pub truncated: bool,
 }
 
 pub fn open_key(hive: EditorHive, path: &str) -> Result<Key> {
@@ -184,7 +193,12 @@ pub(crate) fn remove_value_raw(hive: EditorHive, path: &str, name: &str) -> Resu
     Ok(())
 }
 
-pub fn create_key(hive: EditorHive, parent_path: &str, name: &str) -> Result<()> {
+pub fn create_key(
+    hive: EditorHive,
+    parent_path: &str,
+    name: &str,
+    backup_dir: &Path,
+) -> Result<PathBuf> {
     let name = name.trim();
     if name.is_empty() || name.contains('\\') {
         bail!("Имя раздела не должно быть пустым или содержать \\");
@@ -196,6 +210,7 @@ pub fn create_key(hive: EditorHive, parent_path: &str, name: &str) -> Result<()>
     {
         bail!("Раздел уже существует");
     }
+    let backup = backup_key_to(hive, parent_path, backup_dir)?;
     parent
         .create(name)
         .with_context(|| format!("не удалось создать раздел {name}"))?;
@@ -203,8 +218,40 @@ pub fn create_key(hive: EditorHive, parent_path: &str, name: &str) -> Result<()>
         "ts": Utc::now().to_rfc3339(),
         "event": "registry_key_created",
         "key": full_path(hive, &join_path(parent_path, name)),
+        "backup": backup.display().to_string(),
     }));
-    Ok(())
+    Ok(backup)
+}
+
+pub fn key_stats(hive: EditorHive, path: &str, limit: usize) -> Result<KeyStats> {
+    let cap = limit.max(1);
+    let mut stats = KeyStats::default();
+    let mut queue = VecDeque::from([path.to_owned()]);
+
+    while let Some(current) = queue.pop_front() {
+        let Ok(key) = open_key(hive, &current) else {
+            continue;
+        };
+        if let Ok(values) = key.values() {
+            stats.values = stats.values.saturating_add(values.count());
+        }
+        if stats.subkeys.saturating_add(stats.values) >= cap {
+            stats.truncated = true;
+            return Ok(stats);
+        }
+        if let Ok(keys) = key.keys() {
+            for child in keys {
+                stats.subkeys = stats.subkeys.saturating_add(1);
+                queue.push_back(join_path(&current, &child));
+                if stats.subkeys.saturating_add(stats.values) >= cap {
+                    stats.truncated = true;
+                    return Ok(stats);
+                }
+            }
+        }
+    }
+
+    Ok(stats)
 }
 
 pub fn delete_key(hive: EditorHive, path: &str, backup_dir: &Path) -> Result<PathBuf> {
@@ -590,10 +637,26 @@ mod tests {
         CURRENT_USER.create(&parent).unwrap();
         let dir = tempfile::tempdir().unwrap();
 
-        create_key(EditorHive::Hkcu, &parent, "Child").unwrap();
-        let backup = delete_key(EditorHive::Hkcu, &format!(r"{parent}\Child"), dir.path()).unwrap();
+        let create_backup = create_key(EditorHive::Hkcu, &parent, "Child", dir.path()).unwrap();
+        assert!(create_backup.is_file());
+
+        let child_path = format!(r"{parent}\Child");
+        let child = open_key_rw(EditorHive::Hkcu, &child_path).unwrap();
+        write_raw(&child, "Value", REG_SZ, "hello").unwrap();
+        child.create("Grand").unwrap();
+        drop(child);
+
+        let stats = key_stats(EditorHive::Hkcu, &child_path, 100).unwrap();
+        assert_eq!(stats.subkeys, 1);
+        assert_eq!(stats.values, 1);
+        assert!(!stats.truncated);
+
+        let limited = key_stats(EditorHive::Hkcu, &child_path, 1).unwrap();
+        assert!(limited.truncated);
+
+        let backup = delete_key(EditorHive::Hkcu, &child_path, dir.path()).unwrap();
         assert!(backup.is_file());
-        assert!(CURRENT_USER.open(format!(r"{parent}\Child")).is_err());
+        assert!(CURRENT_USER.open(&child_path).is_err());
 
         let _ = CURRENT_USER.remove_tree(&parent);
     }

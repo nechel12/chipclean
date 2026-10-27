@@ -5,7 +5,8 @@ use crate::{
     core::{
         job::{self, Job},
         registry_editor::{
-            self, EditorHive, REG_DWORD, REG_SZ, RegValueRow, SearchHit, join_path, split_parent,
+            self, EditorHive, KeyStats, REG_DWORD, REG_SZ, RegValueRow, SearchHit, join_path,
+            split_parent,
         },
     },
 };
@@ -47,6 +48,7 @@ pub enum EditorDialog {
     },
     DeleteKey {
         path: String,
+        stats: KeyStats,
     },
 }
 
@@ -330,9 +332,19 @@ impl EditorState {
             self.set_error("Корневой раздел удалить нельзя.".to_owned());
             return;
         }
-        self.dialog = Some(EditorDialog::DeleteKey {
-            path: self.selected.clone(),
-        });
+        match registry_editor::key_stats(
+            self.hive,
+            &self.selected,
+            registry_editor::KEY_STATS_LIMIT,
+        ) {
+            Ok(stats) => {
+                self.dialog = Some(EditorDialog::DeleteKey {
+                    path: self.selected.clone(),
+                    stats,
+                });
+            }
+            Err(err) => self.set_error(err.to_string()),
+        }
     }
 
     pub fn close_dialog(&mut self) {
@@ -346,8 +358,13 @@ impl EditorState {
 
         match dialog {
             EditorDialog::CreateKey { name, .. } => {
-                match registry_editor::create_key(self.hive, &self.selected, &name) {
-                    Ok(()) => {
+                match registry_editor::create_key(
+                    self.hive,
+                    &self.selected,
+                    &name,
+                    &config::backups_dir(),
+                ) {
+                    Ok(backup) => {
                         let path = join_path(&self.selected, name.trim());
                         self.children.remove(&self.selected);
                         self.load_children(self.selected.clone());
@@ -355,7 +372,7 @@ impl EditorState {
                         self.selected = path;
                         self.selected_value = None;
                         self.load_values();
-                        self.set_ok("Раздел создан.".to_owned());
+                        self.set_ok(format!("Раздел создан. Бэкап: {}", backup.display()));
                     }
                     Err(err) => {
                         self.dialog = Some(EditorDialog::CreateKey {
@@ -417,7 +434,7 @@ impl EditorState {
                     Err(err) => self.set_error(err.to_string()),
                 }
             }
-            EditorDialog::DeleteKey { path } => {
+            EditorDialog::DeleteKey { path, .. } => {
                 match registry_editor::delete_key(self.hive, &path, &config::backups_dir()) {
                     Ok(backup) => {
                         let parent = split_parent(&path)

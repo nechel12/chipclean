@@ -539,7 +539,7 @@ fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
                         ui,
                         ph::FOLDER_PLUS,
                         "Создать раздел",
-                        "Новый подключ выбранного раздела.",
+                        "Новый подключ выбранного раздела; родительский раздел сохраняется в .reg-бэкап.",
                     );
                     ui.add_space(12.0);
                     ui.label(RichText::new("Имя раздела").font(font(9.0)).color(TEXT_DIM));
@@ -636,7 +636,7 @@ fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
                     );
                     dialog_footer(ui, "Удалить значение", &mut action);
                 }
-                EditorDialog::DeleteKey { path } => {
+                EditorDialog::DeleteKey { path, stats } => {
                     dialog_header(
                         ui,
                         ph::TRASH,
@@ -649,6 +649,21 @@ fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
                             .font(FontId::new(10.0, FontFamily::Monospace))
                             .color(TEXT),
                     );
+                    ui.add_space(6.0);
+                    let scope = if stats.truncated {
+                        format!(
+                            "Не менее {} подразделов и {} значений.",
+                            stats.subkeys, stats.values
+                        )
+                    } else if stats.subkeys == 0 && stats.values == 0 {
+                        "Раздел пуст.".to_owned()
+                    } else {
+                        format!(
+                            "Подразделов: {} · значений: {}.",
+                            stats.subkeys, stats.values
+                        )
+                    };
+                    ui.label(RichText::new(scope).font(font(10.0)).color(TEXT_MUTED));
                     ui.add_space(8.0);
                     widgets::inline_hint(
                         ui,
