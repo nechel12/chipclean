@@ -407,7 +407,7 @@ pub fn clean_target(target: &DataTarget) -> CleanReport {
         report.errors.extend(errors);
     }
 
-    journal(json!({
+    if let Some(err) = journal(json!({
         "ts": chrono::Utc::now().to_rfc3339(),
         "event": "privacy_clean",
         "target": target.id,
@@ -416,7 +416,11 @@ pub fn clean_target(target: &DataTarget) -> CleanReport {
         "history": report.history,
         "registry": report.registry,
         "errors": report.errors.len(),
-    }));
+    })) {
+        report
+            .errors
+            .push(format!("не удалось записать журнал: {err}"));
+    }
     report
 }
 
@@ -830,16 +834,20 @@ fn target(
     }
 }
 
-fn journal(event: serde_json::Value) {
+fn journal(event: serde_json::Value) -> Option<String> {
     match Journal::open() {
-        Ok(mut journal) => {
-            if let Err(err) = journal.record(event) {
+        Ok(mut journal) => journal
+            .record(event)
+            .and_then(|()| journal.flush())
+            .err()
+            .map(|err| {
                 tracing::warn!(%err, "failed to write privacy journal event");
-            } else {
-                let _ = journal.flush();
-            }
+                err.to_string()
+            }),
+        Err(err) => {
+            tracing::warn!(%err, "failed to open operations journal");
+            Some(err.to_string())
         }
-        Err(err) => tracing::warn!(%err, "failed to open operations journal"),
     }
 }
 

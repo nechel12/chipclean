@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufWriter, Write},
+    io::{BufWriter, ErrorKind, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -14,6 +14,8 @@ use super::{
     model::{CategoryId, CleanupCategory},
 };
 
+const MAX_JOURNAL_BYTES: u64 = 10 * 1024 * 1024;
+
 pub struct Journal {
     writer: BufWriter<File>,
     path: PathBuf,
@@ -25,9 +27,17 @@ impl Journal {
     }
 
     pub(crate) fn open_at(path: PathBuf) -> Result<Self> {
+        Self::open_at_with_limit(path, MAX_JOURNAL_BYTES)
+    }
+
+    fn open_at_with_limit(path: PathBuf, max_bytes: u64) -> Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("не удалось создать {}", parent.display()))?;
+        }
+
+        if let Err(err) = rotate_if_needed(&path, max_bytes) {
+            tracing::warn!(%err, path = %path.display(), "failed to rotate operations journal");
         }
 
         let file = OpenOptions::new()
@@ -126,6 +136,41 @@ impl Journal {
     }
 }
 
+fn rotate_if_needed(path: &Path, max_bytes: u64) -> Result<()> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("не удалось проверить {}", path.display()));
+        }
+    };
+    if metadata.len() < max_bytes {
+        return Ok(());
+    }
+
+    let backup = rotated_path(path);
+    match fs::remove_file(&backup) {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(err).with_context(|| format!("не удалось удалить {}", backup.display()));
+        }
+    }
+    fs::rename(path, &backup).with_context(|| {
+        format!(
+            "не удалось переместить {} в {}",
+            path.display(),
+            backup.display()
+        )
+    })
+}
+
+fn rotated_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".1");
+    PathBuf::from(name)
+}
+
 fn timestamp() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
@@ -160,5 +205,41 @@ mod tests {
         assert!(text.contains("\"event\":\"cleanup_started\""));
         assert!(text.contains("\"path\":\"C:\\\\Temp\\\\a.tmp\""));
         assert!(text.contains("\"event\":\"cleanup_finished\""));
+    }
+
+    #[test]
+    fn rotates_an_oversized_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("operations.jsonl");
+        let backup = rotated_path(&path);
+        fs::write(&path, b"old\n").unwrap();
+        fs::write(&backup, b"stale\n").unwrap();
+
+        let mut journal = Journal::open_at_with_limit(path.clone(), 4).unwrap();
+        journal
+            .record(json!({ "event": "after_rotation" }))
+            .unwrap();
+        journal.flush().unwrap();
+
+        assert_eq!(fs::read(&backup).unwrap(), b"old\n");
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("after_rotation"));
+        assert!(!text.contains("stale"));
+    }
+
+    #[test]
+    fn keeps_a_small_journal_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("operations.jsonl");
+        fs::write(&path, b"old\n").unwrap();
+
+        let mut journal = Journal::open_at_with_limit(path.clone(), 1024).unwrap();
+        journal.record(json!({ "event": "appended" })).unwrap();
+        journal.flush().unwrap();
+
+        assert!(!rotated_path(&path).exists());
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("old"));
+        assert!(text.contains("appended"));
     }
 }
