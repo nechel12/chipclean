@@ -1,5 +1,9 @@
 use crate::{
     config::{self, Settings},
+    core::community_state::CommunityState,
+    core::privacy_state::PrivacyState,
+    core::registry_editor_state::EditorState,
+    core::registry_snapshots_state::SnapshotState,
     core::registry_state::RegistryState,
     core::startup_state::StartupState,
     core::state::CleanupState,
@@ -12,6 +16,10 @@ use std::time::{Duration, Instant};
 pub enum Page {
     Cleanup,
     Registry,
+    RegistryEditor,
+    Snapshots,
+    Privacy,
+    Community,
     Startup,
     Traces,
     Programs,
@@ -23,6 +31,10 @@ impl Page {
         match self {
             Self::Cleanup => "Очистка",
             Self::Registry => "Реестр",
+            Self::RegistryEditor => "Редактор реестра",
+            Self::Snapshots => "Снимки реестра",
+            Self::Privacy => "Личные данные",
+            Self::Community => "Чистка сообществом",
             Self::Startup => "Автозагрузка",
             Self::Traces => "Следы",
             Self::Programs => "Программы",
@@ -34,6 +46,10 @@ impl Page {
         match self {
             Self::Cleanup => "Очистка системы",
             Self::Registry => "Реестр",
+            Self::RegistryEditor => "Редактор реестра",
+            Self::Snapshots => "Снимки реестра",
+            Self::Privacy => "Чистка личных данных",
+            Self::Community => "Чистка сообществом",
             Self::Startup => "Автозагрузка",
             Self::Traces => "Следы программ",
             Self::Programs => "Программы",
@@ -47,12 +63,30 @@ impl Page {
             Self::Registry => {
                 "Безопасная проверка реестра и обязательный .reg-бэкап перед изменениями."
             }
+            Self::RegistryEditor => "Просмотр, поиск и изменение реестра с .reg-бэкапами.",
+            Self::Snapshots => "Создание снимков и сравнение изменений реестра.",
+            Self::Privacy => "История браузеров, списки файлов и недавние документы.",
+            Self::Community => "Правила очистки из открытой базы winapp2.ini.",
             Self::Startup => "Run/RunOnce, папки «Автозагрузка», планировщик задач и службы.",
             Self::Traces => "Битые ярлыки и следы программ: карантин или удаление.",
             Self::Programs => "Установленные программы и запуск их штатных деинсталляторов.",
             Self::Settings => "Правила очистки, расположение журналов и сведения о сборке.",
         }
     }
+}
+
+fn initial_page() -> Page {
+    #[cfg(debug_assertions)]
+    if let Ok(page) = std::env::var("CHIPCLEAN_START_PAGE") {
+        return match page.as_str() {
+            "registry_editor" => Page::RegistryEditor,
+            "snapshots" => Page::Snapshots,
+            "privacy" => Page::Privacy,
+            "community" => Page::Community,
+            _ => Page::Cleanup,
+        };
+    }
+    Page::Cleanup
 }
 
 pub struct Toast {
@@ -66,6 +100,10 @@ pub struct ChipCleanApp {
     pub settings: Settings,
     pub cleanup: CleanupState,
     pub registry: RegistryState,
+    pub registry_editor: EditorState,
+    pub snapshots: SnapshotState,
+    pub privacy: PrivacyState,
+    pub community: CommunityState,
     pub startup: StartupState,
     pub traces: TracesState,
     pub programs: UninstallState,
@@ -81,15 +119,23 @@ impl ChipCleanApp {
         let settings = config::load();
         let cleanup = CleanupState::new(&settings);
         let registry = RegistryState::new();
+        let registry_editor = EditorState::new();
+        let snapshots = SnapshotState::new();
+        let privacy = PrivacyState::new();
+        let community = CommunityState::new();
         let startup = StartupState::new();
         let traces = TracesState::new();
         let programs = UninstallState::new();
 
         Self {
-            page: Page::Cleanup,
+            page: initial_page(),
             settings,
             cleanup,
             registry,
+            registry_editor,
+            snapshots,
+            privacy,
+            community,
             startup,
             traces,
             programs,
@@ -175,6 +221,10 @@ impl eframe::App for ChipCleanApp {
             .show(ui, |ui| match self.page {
                 Page::Cleanup => ui::cleanup::show(ui, &mut self.cleanup, &mut self.settings),
                 Page::Registry => ui::registry::show(ui, &mut self.registry),
+                Page::RegistryEditor => ui::registry_editor::show(ui, &mut self.registry_editor),
+                Page::Snapshots => ui::snapshots::show(ui, &mut self.snapshots),
+                Page::Privacy => ui::privacy::show(ui, &mut self.privacy),
+                Page::Community => ui::community::show(ui, &mut self.community),
                 Page::Startup => ui::startup::show(ui, &mut self.startup),
                 Page::Traces => ui::traces::show(ui, &mut self.traces),
                 Page::Programs => ui::uninstall::show(ui, &mut self.programs),

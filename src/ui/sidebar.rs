@@ -28,17 +28,26 @@ pub fn show(app: &mut ChipCleanApp, root: &mut Ui) {
             ui.label(RichText::new("ИНСТРУМЕНТЫ").font(font(9.0)).color(TEXT_DIM));
             ui.add_space(8.0);
 
-            let page = &mut app.page;
-            nav(ui, page, Page::Cleanup, ph::BROOM);
-            nav(ui, page, Page::Registry, ph::DATABASE);
-            nav(ui, page, Page::Startup, ph::ROCKET_LAUNCH);
-            nav(ui, page, Page::Traces, ph::FOOTPRINTS);
-            nav(ui, page, Page::Programs, ph::PACKAGE);
-            nav(ui, page, Page::Settings, ph::GEAR_SIX);
+            let nav_height = (ui.available_height() - 190.0).max(220.0);
+            egui::ScrollArea::vertical()
+                .id_salt("sidebar-nav")
+                .max_height(nav_height)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let page = &mut app.page;
+                    nav(ui, page, Page::Cleanup, ph::BROOM);
+                    nav(ui, page, Page::Registry, ph::DATABASE);
+                    nav(ui, page, Page::RegistryEditor, ph::TREE_STRUCTURE);
+                    nav(ui, page, Page::Snapshots, ph::CAMERA);
+                    nav(ui, page, Page::Privacy, ph::FINGERPRINT);
+                    nav(ui, page, Page::Community, ph::USERS_THREE);
+                    nav(ui, page, Page::Startup, ph::ROCKET_LAUNCH);
+                    nav(ui, page, Page::Traces, ph::FOOTPRINTS);
+                    nav(ui, page, Page::Programs, ph::PACKAGE);
+                    nav(ui, page, Page::Settings, ph::GEAR_SIX);
+                });
 
-            let spacer = (ui.available_height() - 166.0).max(0.0);
-            ui.add_space(spacer);
-
+            ui.add_space(8.0);
             admin_card(ui, elevated);
             ui.add_space(10.0);
             disk_card(ui, disk);
@@ -55,7 +64,6 @@ fn nav(ui: &mut Ui, page: &mut Page, target: Page, icon: &str) {
     if widgets::nav_item(ui, icon, target.label(), *page == target).clicked() {
         *page = target;
     }
-    ui.add_space(2.0);
 }
 
 fn logo(ui: &mut Ui) {

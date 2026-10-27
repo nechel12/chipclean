@@ -1,9 +1,17 @@
 pub mod catalog;
 pub mod cleaner;
+pub mod community;
+pub mod community_state;
 pub mod journal;
 pub mod model;
+pub mod privacy;
+pub mod privacy_state;
 pub mod quarantine;
 pub mod registry;
+pub mod registry_editor;
+pub mod registry_editor_state;
+pub mod registry_snapshots;
+pub mod registry_snapshots_state;
 pub mod registry_state;
 pub mod scanner;
 pub mod services;

@@ -15,7 +15,7 @@ use crate::{
 
 pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> Response {
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 40.0), Sense::click());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
 
     let fill = if selected {
         ACCENT_SOFT

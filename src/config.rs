@@ -59,6 +59,14 @@ pub fn backups_dir() -> PathBuf {
     log_dir().join("backups")
 }
 
+pub fn snapshots_dir() -> PathBuf {
+    log_dir().join("snapshots")
+}
+
+pub fn community_db_path() -> PathBuf {
+    log_dir().join("winapp2.ini")
+}
+
 pub fn startup_store_path() -> PathBuf {
     log_dir().join("disabled-startup.json")
 }

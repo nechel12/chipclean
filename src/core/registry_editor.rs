@@ -1,0 +1,583 @@
+use std::{
+    collections::VecDeque,
+    fs,
+    os::windows::process::CommandExt,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+use anyhow::{Context, Result, anyhow, bail};
+use chrono::Utc;
+use serde_json::json;
+use windows_registry::{CLASSES_ROOT, CURRENT_CONFIG, CURRENT_USER, Key, LOCAL_MACHINE, USERS};
+
+use crate::core::journal::Journal;
+
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+pub const REG_SZ: u32 = 1;
+pub const REG_EXPAND_SZ: u32 = 2;
+pub const REG_BINARY: u32 = 3;
+pub const REG_DWORD: u32 = 4;
+pub const REG_MULTI_SZ: u32 = 7;
+pub const REG_QWORD: u32 = 11;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorHive {
+    Hkcu,
+    Hklm,
+    Hkcr,
+    Hku,
+    Hkcc,
+}
+
+impl EditorHive {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hkcu => "HKEY_CURRENT_USER",
+            Self::Hklm => "HKEY_LOCAL_MACHINE",
+            Self::Hkcr => "HKEY_CLASSES_ROOT",
+            Self::Hku => "HKEY_USERS",
+            Self::Hkcc => "HKEY_CURRENT_CONFIG",
+        }
+    }
+
+    pub fn short(self) -> &'static str {
+        match self {
+            Self::Hkcu => "HKCU",
+            Self::Hklm => "HKLM",
+            Self::Hkcr => "HKCR",
+            Self::Hku => "HKU",
+            Self::Hkcc => "HKCC",
+        }
+    }
+
+    pub fn reg_name(self) -> &'static str {
+        match self {
+            Self::Hkcu => "HKEY_CURRENT_USER",
+            Self::Hklm => "HKEY_LOCAL_MACHINE",
+            Self::Hkcr => "HKEY_CLASSES_ROOT",
+            Self::Hku => "HKEY_USERS",
+            Self::Hkcc => "HKEY_CURRENT_CONFIG",
+        }
+    }
+
+    fn root(self) -> &'static Key {
+        match self {
+            Self::Hkcu => CURRENT_USER,
+            Self::Hklm => LOCAL_MACHINE,
+            Self::Hkcr => CLASSES_ROOT,
+            Self::Hku => USERS,
+            Self::Hkcc => CURRENT_CONFIG,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RegValueRow {
+    pub name: String,
+    pub ty: u32,
+    pub preview: String,
+    pub size: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchHit {
+    pub path: String,
+    pub value_name: Option<String>,
+    pub detail: String,
+}
+
+pub fn open_key(hive: EditorHive, path: &str) -> Result<Key> {
+    hive.root()
+        .open(path)
+        .with_context(|| format!("не удалось открыть {}", full_path(hive, path)))
+}
+
+fn open_key_rw(hive: EditorHive, path: &str) -> Result<Key> {
+    hive.root()
+        .options()
+        .read()
+        .write()
+        .open(path)
+        .with_context(|| format!("не удалось открыть для записи {}", full_path(hive, path)))
+}
+
+pub fn list_subkeys(hive: EditorHive, path: &str) -> Result<Vec<String>> {
+    let key = open_key(hive, path)?;
+    let mut names: Vec<String> = key.keys()?.collect();
+    names.sort_by_key(|name| name.to_lowercase());
+    Ok(names)
+}
+
+pub fn list_values(hive: EditorHive, path: &str) -> Result<Vec<RegValueRow>> {
+    let key = open_key(hive, path)?;
+    let mut rows = Vec::new();
+    for (name, value) in key.values()? {
+        rows.push(RegValueRow {
+            name,
+            ty: u32::from(value.ty()),
+            preview: preview_value(&value),
+            size: value.len(),
+        });
+    }
+    rows.sort_by_key(|row| row.name.to_lowercase());
+    Ok(rows)
+}
+
+pub fn read_value_text(hive: EditorHive, path: &str, name: &str) -> Result<(u32, String)> {
+    let key = open_key(hive, path)?;
+    let value = key
+        .get_value(name)
+        .with_context(|| format!("не удалось прочитать значение {}", display_value_name(name)))?;
+    let ty = u32::from(value.ty());
+    Ok((ty, value_to_text(&value)))
+}
+
+pub fn write_value(
+    hive: EditorHive,
+    path: &str,
+    name: &str,
+    ty: u32,
+    text: &str,
+    backup_dir: &Path,
+) -> Result<PathBuf> {
+    let key = open_key_rw(hive, path)?;
+    let backup = backup_key_to(hive, path, backup_dir)?;
+    write_raw(&key, name, ty, text)?;
+    journal(json!({
+        "ts": Utc::now().to_rfc3339(),
+        "event": "registry_value_set",
+        "key": full_path(hive, path),
+        "value": name,
+        "type": ty,
+        "backup": backup.display().to_string(),
+    }));
+    Ok(backup)
+}
+
+pub fn delete_value(
+    hive: EditorHive,
+    path: &str,
+    name: &str,
+    backup_dir: &Path,
+) -> Result<PathBuf> {
+    let key = open_key_rw(hive, path)?;
+    let backup = backup_key_to(hive, path, backup_dir)?;
+    key.remove_value(name)
+        .with_context(|| format!("не удалось удалить значение {}", display_value_name(name)))?;
+    journal(json!({
+        "ts": Utc::now().to_rfc3339(),
+        "event": "registry_value_deleted",
+        "key": full_path(hive, path),
+        "value": name,
+        "backup": backup.display().to_string(),
+    }));
+    Ok(backup)
+}
+
+pub fn create_key(hive: EditorHive, parent_path: &str, name: &str) -> Result<()> {
+    let name = name.trim();
+    if name.is_empty() || name.contains('\\') {
+        bail!("Имя раздела не должно быть пустым или содержать \\");
+    }
+    let parent = open_key_rw(hive, parent_path)?;
+    if parent
+        .keys()?
+        .any(|existing| existing.eq_ignore_ascii_case(name))
+    {
+        bail!("Раздел уже существует");
+    }
+    parent
+        .create(name)
+        .with_context(|| format!("не удалось создать раздел {name}"))?;
+    journal(json!({
+        "ts": Utc::now().to_rfc3339(),
+        "event": "registry_key_created",
+        "key": full_path(hive, &join_path(parent_path, name)),
+    }));
+    Ok(())
+}
+
+pub fn delete_key(hive: EditorHive, path: &str, backup_dir: &Path) -> Result<PathBuf> {
+    let (parent_path, name) =
+        split_parent(path).ok_or_else(|| anyhow!("Нельзя удалить корневой раздел."))?;
+    let parent = open_key_rw(hive, &parent_path)?;
+    let backup = backup_key_to(hive, path, backup_dir)?;
+    parent
+        .remove_tree(&name)
+        .with_context(|| format!("не удалось удалить раздел {name}"))?;
+    journal(json!({
+        "ts": Utc::now().to_rfc3339(),
+        "event": "registry_key_deleted",
+        "key": full_path(hive, path),
+        "backup": backup.display().to_string(),
+    }));
+    Ok(backup)
+}
+
+pub fn search(hive: EditorHive, root: &str, query: &str, limit: usize) -> Result<Vec<SearchHit>> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Ok(Vec::new());
+    }
+    let cap = limit.clamp(1, 500);
+    let mut queue = VecDeque::from([root.to_owned()]);
+    let mut hits = Vec::new();
+    let mut visited = 0_usize;
+
+    while let Some(path) = queue.pop_front() {
+        visited += 1;
+        if visited > 20_000 || hits.len() >= cap {
+            break;
+        }
+
+        let Ok(key) = open_key(hive, &path) else {
+            continue;
+        };
+
+        if (path.to_lowercase().contains(&query) || hive.short().to_lowercase().contains(&query))
+            && !path.is_empty()
+        {
+            hits.push(SearchHit {
+                path: path.clone(),
+                value_name: None,
+                detail: "Раздел".to_owned(),
+            });
+        }
+
+        if let Ok(values) = key.values() {
+            for (name, value) in values {
+                if hits.len() >= cap {
+                    break;
+                }
+                let preview = preview_value(&value);
+                if name.to_lowercase().contains(&query) || preview.to_lowercase().contains(&query) {
+                    hits.push(SearchHit {
+                        path: path.clone(),
+                        value_name: Some(name),
+                        detail: preview,
+                    });
+                }
+            }
+        }
+
+        if let Ok(keys) = key.keys() {
+            for child in keys {
+                if matches!(path.as_str(), "" | "Software") && child.eq_ignore_ascii_case("Classes")
+                {
+                    continue;
+                }
+                queue.push_back(join_path(&path, &child));
+                if queue.len() > 5000 {
+                    break;
+                }
+            }
+        }
+    }
+
+    hits.sort_by(|left, right| {
+        left.path
+            .to_lowercase()
+            .cmp(&right.path.to_lowercase())
+            .then_with(|| left.value_name.cmp(&right.value_name))
+    });
+    Ok(hits)
+}
+
+pub fn full_path(hive: EditorHive, path: &str) -> String {
+    if path.trim().is_empty() {
+        hive.short().to_owned()
+    } else {
+        format!("{}\\{}", hive.short(), path)
+    }
+}
+
+pub fn display_value_name(name: &str) -> &str {
+    if name.is_empty() {
+        "(По умолчанию)"
+    } else {
+        name
+    }
+}
+
+pub fn type_label(ty: u32) -> &'static str {
+    match ty {
+        REG_SZ => "REG_SZ",
+        REG_EXPAND_SZ => "REG_EXPAND_SZ",
+        REG_BINARY => "REG_BINARY",
+        REG_DWORD => "REG_DWORD",
+        REG_MULTI_SZ => "REG_MULTI_SZ",
+        REG_QWORD => "REG_QWORD",
+        _ => "REG_UNKNOWN",
+    }
+}
+
+pub fn preview_value(value: &windows_registry::Value) -> String {
+    let text = value_to_text(value);
+    let text = text.replace(['\r', '\n'], " ");
+    truncate(&text, 96)
+}
+
+pub fn value_to_text(value: &windows_registry::Value) -> String {
+    let ty = u32::from(value.ty());
+    match ty {
+        REG_SZ | REG_EXPAND_SZ => {
+            let wide = value.as_wide();
+            let end = wide.iter().position(|ch| *ch == 0).unwrap_or(wide.len());
+            String::from_utf16_lossy(&wide[..end])
+        }
+        REG_DWORD => value
+            .get(0..4)
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap_or_default()).to_string())
+            .unwrap_or_default(),
+        REG_QWORD => value
+            .get(0..8)
+            .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap_or_default()).to_string())
+            .unwrap_or_default(),
+        REG_MULTI_SZ => {
+            let wide = value.as_wide();
+            let mut parts = Vec::new();
+            let mut start = 0;
+            for (index, ch) in wide.iter().enumerate() {
+                if *ch == 0 {
+                    if index > start {
+                        parts.push(String::from_utf16_lossy(&wide[start..index]));
+                    }
+                    start = index + 1;
+                }
+            }
+            parts.join("\n")
+        }
+        _ => {
+            let mut output = String::new();
+            for (index, byte) in value.iter().enumerate() {
+                if index > 0 && index % 2 == 0 {
+                    output.push(' ');
+                }
+                output.push_str(&format!("{byte:02X}"));
+                if output.len() > 180 {
+                    output.push('…');
+                    break;
+                }
+            }
+            output
+        }
+    }
+}
+
+pub fn write_raw(key: &Key, name: &str, ty: u32, text: &str) -> Result<()> {
+    match ty {
+        REG_SZ => key.set_string(name, text)?,
+        REG_EXPAND_SZ => key.set_expand_string(name, text)?,
+        REG_DWORD => {
+            let value = parse_u64(text)?;
+            let value = u32::try_from(value).context("REG_DWORD вне диапазона u32")?;
+            key.set_u32(name, value)?;
+        }
+        REG_QWORD => {
+            let value = parse_u64(text)?;
+            key.set_u64(name, value)?;
+        }
+        REG_MULTI_SZ => {
+            let lines: Vec<&str> = text
+                .lines()
+                .map(|line| line.trim_end_matches('\r'))
+                .collect();
+            key.set_multi_string(name, &lines)?;
+        }
+        REG_BINARY => {
+            let bytes = parse_hex(text)?;
+            key.set_bytes(name, windows_registry::Type::Bytes, &bytes)?;
+        }
+        other => {
+            let bytes = parse_hex(text)?;
+            key.set_bytes(name, windows_registry::Type::Other(other), &bytes)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn backup_key_to(hive: EditorHive, path: &str, base_dir: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(base_dir)
+        .with_context(|| format!("не удалось создать {}", base_dir.display()))?;
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
+    let label = if path.trim().is_empty() {
+        "root".to_owned()
+    } else {
+        path.replace('\\', "_")
+    };
+    let path_file = base_dir.join(format!("editor-{stamp}-{}.reg", sanitize(&label)));
+    let full = if path.trim().is_empty() {
+        hive.reg_name().to_owned()
+    } else {
+        format!("{}\\{}", hive.reg_name(), path)
+    };
+    let output = Command::new(reg_exe())
+        .creation_flags(CREATE_NO_WINDOW)
+        .arg("export")
+        .arg(&full)
+        .arg(&path_file)
+        .arg("/y")
+        .output()
+        .with_context(|| format!("не удалось запустить reg.exe для {full}"))?;
+    if !output.status.success() {
+        bail!(
+            "reg.exe export завершился с {} для {full}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    if !path_file.is_file() {
+        bail!("reg.exe не создал файл {}", path_file.display());
+    }
+    Ok(path_file)
+}
+
+pub fn split_parent(path: &str) -> Option<(String, String)> {
+    let trimmed = path.trim_matches('\\');
+    let (parent, name) = trimmed.rsplit_once('\\')?;
+    Some((parent.to_owned(), name.to_owned()))
+}
+
+pub fn join_path(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{parent}\\{name}")
+    }
+}
+
+fn parse_u64(text: &str) -> Result<u64> {
+    let text = text.trim();
+    let value = if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16)
+    } else {
+        text.parse::<u64>()
+    };
+    value.context("ожидается число")
+}
+
+fn parse_hex(text: &str) -> Result<Vec<u8>> {
+    let cleaned: String = text
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && *ch != ',' && *ch != '-' && *ch != ':')
+        .collect();
+    if cleaned.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !cleaned.len().is_multiple_of(2) {
+        bail!("hex-значение должно содержать чётное число символов");
+    }
+    let mut bytes = Vec::with_capacity(cleaned.len() / 2);
+    let chars: Vec<char> = cleaned.chars().collect();
+    for chunk in chars.chunks(2) {
+        let pair: String = chunk.iter().collect();
+        bytes.push(u8::from_str_radix(&pair, 16).context("некорректный hex")?);
+    }
+    Ok(bytes)
+}
+
+fn sanitize(path: &str) -> String {
+    let mut output: String = path
+        .chars()
+        .map(|ch| match ch {
+            '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => ch,
+        })
+        .take(80)
+        .collect();
+    if output.is_empty() {
+        output.push_str("key");
+    }
+    output
+}
+
+fn truncate(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let mut value: String = text.chars().take(max).collect();
+    value.push('…');
+    value
+}
+
+fn reg_exe() -> PathBuf {
+    std::env::var_os("WINDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join("reg.exe")
+}
+
+fn journal(event: serde_json::Value) {
+    match Journal::open() {
+        Ok(mut journal) => {
+            if let Err(err) = journal.record(event) {
+                tracing::warn!(%err, "failed to write registry editor journal event");
+            } else {
+                let _ = journal.flush();
+            }
+        }
+        Err(err) => tracing::warn!(%err, "failed to open operations journal"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows_registry::CURRENT_USER;
+
+    #[test]
+    fn parses_hex_values() {
+        assert_eq!(parse_hex("01 02 ff").unwrap(), vec![1, 2, 255]);
+        assert!(parse_hex("1").is_err());
+    }
+
+    #[test]
+    fn writes_and_deletes_test_values() {
+        let unique = format!(
+            "ChipCleanEditor-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_micros()
+        );
+        let parent = format!(r"Software\{unique}");
+        let key = CURRENT_USER.create(&parent).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+
+        write_raw(&key, "Text", REG_SZ, "hello").unwrap();
+        let (ty, text) = read_value_text(EditorHive::Hkcu, &parent, "Text").unwrap();
+        assert_eq!(ty, REG_SZ);
+        assert_eq!(text, "hello");
+
+        write_raw(&key, "Number", REG_DWORD, "42").unwrap();
+        let (_, text) = read_value_text(EditorHive::Hkcu, &parent, "Number").unwrap();
+        assert_eq!(text, "42");
+
+        let backup = delete_value(EditorHive::Hkcu, &parent, "Text", dir.path()).unwrap();
+        assert!(backup.is_file());
+        assert!(key.get_value("Text").is_err());
+
+        drop(key);
+        let _ = CURRENT_USER.remove_tree(&parent);
+    }
+
+    #[test]
+    fn creates_and_removes_test_key() {
+        let unique = format!(
+            "ChipCleanEditorKey-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_micros()
+        );
+        let parent = format!(r"Software\{unique}");
+        CURRENT_USER.create(&parent).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+
+        create_key(EditorHive::Hkcu, &parent, "Child").unwrap();
+        let backup = delete_key(EditorHive::Hkcu, &format!(r"{parent}\Child"), dir.path()).unwrap();
+        assert!(backup.is_file());
+        assert!(CURRENT_USER.open(format!(r"{parent}\Child")).is_err());
+
+        let _ = CURRENT_USER.remove_tree(&parent);
+    }
+}
