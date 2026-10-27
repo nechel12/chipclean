@@ -17,6 +17,8 @@ pub mod registry_editor_state;
 pub mod registry_snapshots;
 pub mod registry_snapshots_state;
 pub mod registry_state;
+pub mod rollback;
+pub mod rollback_state;
 pub mod safety;
 pub mod scanner;
 pub mod services;

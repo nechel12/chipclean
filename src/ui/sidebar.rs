@@ -39,6 +39,7 @@ pub fn show(app: &mut ChipCleanApp, root: &mut Ui) {
                     nav(ui, page, Page::Registry, ph::DATABASE);
                     nav(ui, page, Page::RegistryEditor, ph::TREE_STRUCTURE);
                     nav(ui, page, Page::Snapshots, ph::CAMERA);
+                    nav(ui, page, Page::Rollback, ph::CLOCK_COUNTER_CLOCKWISE);
                     nav(ui, page, Page::Privacy, ph::FINGERPRINT);
                     nav(ui, page, Page::Community, ph::USERS_THREE);
                     nav(ui, page, Page::Startup, ph::ROCKET_LAUNCH);

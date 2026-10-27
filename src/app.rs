@@ -5,6 +5,7 @@ use crate::{
     core::registry_editor_state::EditorState,
     core::registry_snapshots_state::SnapshotState,
     core::registry_state::RegistryState,
+    core::rollback_state::RollbackState,
     core::startup_state::StartupState,
     core::state::CleanupState,
     core::traces_state::TracesState,
@@ -18,6 +19,7 @@ pub enum Page {
     Registry,
     RegistryEditor,
     Snapshots,
+    Rollback,
     Privacy,
     Community,
     Startup,
@@ -33,6 +35,7 @@ impl Page {
             Self::Registry => "Реестр",
             Self::RegistryEditor => "Редактор реестра",
             Self::Snapshots => "Снимки реестра",
+            Self::Rollback => "Центр отката",
             Self::Privacy => "Личные данные",
             Self::Community => "Чистка сообществом",
             Self::Startup => "Автозагрузка",
@@ -48,6 +51,7 @@ impl Page {
             Self::Registry => "Реестр",
             Self::RegistryEditor => "Редактор реестра",
             Self::Snapshots => "Снимки реестра",
+            Self::Rollback => "Центр отката",
             Self::Privacy => "Чистка личных данных",
             Self::Community => "Чистка сообществом",
             Self::Startup => "Автозагрузка",
@@ -65,6 +69,9 @@ impl Page {
             }
             Self::RegistryEditor => "Просмотр, поиск и изменение реестра с .reg-бэкапами.",
             Self::Snapshots => "Создание снимков и сравнение изменений реестра.",
+            Self::Rollback => {
+                "Восстановление реестра, карантина следов и отключённой автозагрузки."
+            }
             Self::Privacy => "История браузеров, списки файлов и недавние документы.",
             Self::Community => "Правила очистки из открытой базы winapp2.ini.",
             Self::Startup => "Run/RunOnce, папки «Автозагрузка», планировщик задач и службы.",
@@ -81,6 +88,7 @@ fn initial_page() -> Page {
         return match page.as_str() {
             "registry_editor" => Page::RegistryEditor,
             "snapshots" => Page::Snapshots,
+            "rollback" => Page::Rollback,
             "privacy" => Page::Privacy,
             "community" => Page::Community,
             _ => Page::Cleanup,
@@ -102,6 +110,7 @@ pub struct ChipCleanApp {
     pub registry: RegistryState,
     pub registry_editor: EditorState,
     pub snapshots: SnapshotState,
+    pub rollback: RollbackState,
     pub privacy: PrivacyState,
     pub community: CommunityState,
     pub startup: StartupState,
@@ -124,6 +133,7 @@ impl ChipCleanApp {
         let registry = RegistryState::new();
         let registry_editor = EditorState::new();
         let snapshots = SnapshotState::new();
+        let rollback = RollbackState::new();
         let privacy = PrivacyState::new();
         let community = CommunityState::new();
         let startup = StartupState::new();
@@ -137,6 +147,7 @@ impl ChipCleanApp {
             registry,
             registry_editor,
             snapshots,
+            rollback,
             privacy,
             community,
             startup,
@@ -201,6 +212,7 @@ impl eframe::App for ChipCleanApp {
         self.registry.poll_clean();
         self.registry_editor.poll_search();
         self.snapshots.poll();
+        self.rollback.poll();
         self.privacy.poll_scan();
         self.privacy.poll_clean();
         self.community.poll_scan();
@@ -223,6 +235,7 @@ impl eframe::App for ChipCleanApp {
             || self.registry.is_cleaning()
             || self.registry_editor.is_searching()
             || self.snapshots.is_busy()
+            || self.rollback.is_busy()
             || self.privacy.is_scanning()
             || self.privacy.is_cleaning()
             || self.community.is_scanning()
@@ -251,6 +264,7 @@ impl eframe::App for ChipCleanApp {
                 Page::Registry => ui::registry::show(ui, &mut self.registry),
                 Page::RegistryEditor => ui::registry_editor::show(ui, &mut self.registry_editor),
                 Page::Snapshots => ui::snapshots::show(ui, &mut self.snapshots),
+                Page::Rollback => ui::rollback::show(ui, &mut self.rollback),
                 Page::Privacy => ui::privacy::show(ui, &mut self.privacy),
                 Page::Community => ui::community::show(ui, &mut self.community),
                 Page::Startup => ui::startup::show(ui, &mut self.startup),

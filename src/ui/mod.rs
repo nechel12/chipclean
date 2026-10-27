@@ -5,6 +5,7 @@ pub mod format;
 pub mod privacy;
 pub mod registry;
 pub mod registry_editor;
+pub mod rollback;
 pub mod settings;
 pub mod sidebar;
 pub mod snapshots;

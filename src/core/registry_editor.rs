@@ -498,6 +498,27 @@ pub fn backup_key_to(hive: EditorHive, path: &str, base_dir: &Path) -> Result<Pa
     Ok(path_file)
 }
 
+pub fn import_reg_file(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        bail!("Файл .reg не найден: {}", path.display());
+    }
+    let output = Command::new(reg_exe())
+        .creation_flags(CREATE_NO_WINDOW)
+        .arg("import")
+        .arg(path)
+        .output()
+        .with_context(|| format!("не удалось запустить reg.exe для {}", path.display()))?;
+    if !output.status.success() {
+        bail!(
+            "reg.exe import завершился с {} для {}: {}",
+            output.status,
+            path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
 pub fn split_parent(path: &str) -> Option<(String, String)> {
     let trimmed = path.trim_matches('\\');
     let (parent, name) = trimmed.rsplit_once('\\')?;
