@@ -8,8 +8,10 @@ use crate::{
     app::Page,
     config,
     core::{
+        services::ServiceEntry,
         startup::{StartupEntry, StartupEntryKind, StartupSource},
-        startup_state::StartupState,
+        startup_state::{StartupState, StartupTab},
+        tasks::TaskEntry,
     },
     theme::*,
     ui::{common, format, widgets},
@@ -21,9 +23,16 @@ pub fn show(ui: &mut Ui, state: &mut StartupState) {
 
     info_card(ui);
     ui.add_space(14.0);
+    tabs(ui, state);
+    ui.add_space(10.0);
     summary(ui, state);
     ui.add_space(14.0);
     list(ui, state);
+
+    if state.pending.is_some() {
+        let ctx = ui.ctx().clone();
+        confirmation_modal(&ctx, state);
+    }
 }
 
 fn info_card(ui: &mut Ui) {
@@ -55,7 +64,7 @@ fn info_card(ui: &mut Ui) {
                     ui.add_space(2.0);
                     ui.label(
                         RichText::new(
-                            "Run/RunOnce в HKCU и HKLM, а также папки «Автозагрузка». Отключение обратимо: реестр — .reg-бэкап, файлы — карантин. Планировщик задач — позже.",
+                            "Run/RunOnce, папки «Автозагрузка», задачи планировщика и службы. Отключение обратимо: реестр — .reg-бэкап, файлы — карантин, задачи и службы — переключатель ChipClean.",
                         )
                         .font(font(10.5))
                         .color(TEXT_MUTED),
@@ -65,14 +74,87 @@ fn info_card(ui: &mut Ui) {
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        widgets::badge(ui, "Run + Startup", SUCCESS);
+                        widgets::badge(ui, "3 источника", SUCCESS);
                     },
                 );
             });
         });
 }
 
+fn tabs(ui: &mut Ui, state: &mut StartupState) {
+    let mut selected = None;
+    let width = ((ui.available_width() - 16.0) / 3.0).clamp(120.0, 190.0);
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        for (tab, label, icon) in [
+            (StartupTab::Run, "Автозагрузка", ph::ROCKET_LAUNCH),
+            (StartupTab::Tasks, "Планировщик", ph::CALENDAR_CHECK),
+            (StartupTab::Services, "Службы", ph::GEAR_SIX),
+        ] {
+            let count = state.total_count(tab);
+            if tab_button(
+                ui,
+                width,
+                &format!("{icon}  {label}"),
+                count,
+                state.tab == tab,
+            ) {
+                selected = Some(tab);
+            }
+        }
+    });
+
+    if let Some(tab) = selected {
+        state.set_tab(tab);
+    }
+}
+
+fn tab_button(ui: &mut Ui, width: f32, label: &str, count: usize, selected: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 34.0), Sense::click());
+    let fill = if selected {
+        ACCENT_SOFT
+    } else if response.hovered() {
+        SURFACE_3
+    } else {
+        SURFACE_2
+    };
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    if selected {
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(8),
+            Stroke::new(1.0, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    ui.painter().text(
+        rect.left_center() + Vec2::new(12.0, 0.0),
+        Align2::LEFT_CENTER,
+        label,
+        if selected {
+            font_semibold(11.0)
+        } else {
+            font(11.0)
+        },
+        if selected { TEXT } else { TEXT_MUTED },
+    );
+    ui.painter().text(
+        rect.right_center() - Vec2::new(12.0, 0.0),
+        Align2::RIGHT_CENTER,
+        count.to_string(),
+        font_semibold(10.0),
+        if selected { ACCENT } else { TEXT_DIM },
+    );
+
+    response.on_hover_cursor(CursorIcon::PointingHand).clicked()
+}
+
 fn summary(ui: &mut Ui, state: &mut StartupState) {
+    let (active, disabled) = state.counts(state.tab);
+    let total = state.total_count(state.tab);
+
     Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
@@ -81,25 +163,16 @@ fn summary(ui: &mut Ui, state: &mut StartupState) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    let total = state.entries.len() as u64;
                     ui.label(
-                        RichText::new(if total == 0 {
-                            "Автозагрузка пуста".to_owned()
-                        } else {
-                            format!("Найдено {}", format::records(total))
-                        })
-                        .font(font_semibold(15.0))
-                        .color(TEXT),
+                        RichText::new(summary_title(state.tab, total))
+                            .font(font_semibold(15.0))
+                            .color(TEXT),
                     );
                     ui.add_space(2.0);
                     ui.label(
-                        RichText::new(format!(
-                            "Активно: {} · Отключено: {}",
-                            state.enabled_count(),
-                            state.disabled_count()
-                        ))
-                        .font(font(10.5))
-                        .color(TEXT_MUTED),
+                        RichText::new(format!("Активно: {active} · Отключено: {disabled}"))
+                            .font(font(10.5))
+                            .color(TEXT_MUTED),
                     );
 
                     if let Some(message) = &state.message {
@@ -112,59 +185,71 @@ fn summary(ui: &mut Ui, state: &mut StartupState) {
                     }
                 });
 
-                ui.with_layout(
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| {
-                        if widgets::secondary_button_icon(
-                            ui,
-                            "Обновить",
-                            ph::ARROW_CLOCKWISE,
-                        )
-                        .clicked()
-                        {
-                            state.refresh();
-                        }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::secondary_button_icon(ui, "Обновить", ph::ARROW_CLOCKWISE).clicked()
+                    {
+                        state.refresh();
+                    }
+                    if state.tab == StartupTab::Run {
                         ui.add_space(8.0);
                         if widgets::secondary_button(ui, "Открыть бэкапы").clicked()
                             && let Err(err) = config::open_dir(&config::backups_dir())
                         {
                             tracing::warn!(%err, "failed to open backups directory");
                         }
-                    },
-                );
+                    }
+                });
             });
 
             ui.add_space(10.0);
-            widgets::inline_hint(
-                ui,
-                ph::SHIELD_CHECK,
-                "Отключение можно отменить этим же переключателем. Для реестра создаётся .reg-бэкап.",
-                TEXT_DIM,
-            );
+            widgets::inline_hint(ui, ph::SHIELD_CHECK, hint(state.tab), TEXT_DIM);
         });
 }
 
+fn summary_title(tab: StartupTab, total: usize) -> String {
+    match tab {
+        StartupTab::Run => {
+            if total == 0 {
+                "Автозагрузка пуста".to_owned()
+            } else {
+                format!("Найдено {}", format::records(total as u64))
+            }
+        }
+        StartupTab::Tasks => {
+            if total == 0 {
+                "Задачи не найдены".to_owned()
+            } else {
+                format!("Задач: {total}")
+            }
+        }
+        StartupTab::Services => {
+            if total == 0 {
+                "Службы не найдены".to_owned()
+            } else {
+                format!("Служб: {total}")
+            }
+        }
+    }
+}
+
+fn hint(tab: StartupTab) -> &'static str {
+    match tab {
+        StartupTab::Run => {
+            "Отключение можно отменить этим же переключателем. Для реестра создаётся .reg-бэкап."
+        }
+        StartupTab::Tasks => {
+            "Отключение задачи не останавливает уже запущенный экземпляр. Задача не удаляется."
+        }
+        StartupTab::Services => {
+            "Меняется только тип запуска; работающая служба продолжит работу до перезагрузки. Службы, отключённые вне ChipClean, скрыты."
+        }
+    }
+}
+
 fn list(ui: &mut Ui, state: &mut StartupState) {
-    if state.entries.is_empty() {
-        Frame::new()
-            .fill(SURFACE)
-            .stroke(Stroke::new(1.0, BORDER))
-            .corner_radius(CornerRadius::same(12))
-            .inner_margin(Margin::same(16))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(ph::INFO)
-                            .font(FontId::new(17.0, FontFamily::Proportional))
-                            .color(TEXT_DIM),
-                    );
-                    ui.label(
-                        RichText::new("Записи автозагрузки не найдены.")
-                            .font(font(10.5))
-                            .color(TEXT_MUTED),
-                    );
-                });
-            });
+    let total = state.total_count(state.tab);
+    if total == 0 {
+        empty_state(ui, state.tab);
         return;
     }
 
@@ -173,57 +258,371 @@ fn list(ui: &mut Ui, state: &mut StartupState) {
     egui::ScrollArea::vertical()
         .id_salt("startup-entries")
         .auto_shrink([false, false])
-        .show(ui, |ui| {
-            for (index, entry) in state.entries.iter().enumerate() {
-                if startup_row(ui, entry, index) {
-                    toggle_index = Some(index);
+        .show(ui, |ui| match state.tab {
+            StartupTab::Run => {
+                for (index, entry) in state.entries.iter().enumerate() {
+                    if startup_row(ui, entry, index) {
+                        toggle_index = Some(index);
+                    }
+                    ui.add_space(4.0);
                 }
-                ui.add_space(4.0);
+            }
+            StartupTab::Tasks => {
+                for (index, entry) in state.tasks.iter().enumerate() {
+                    if task_row(ui, entry, index) {
+                        toggle_index = Some(index);
+                    }
+                    ui.add_space(4.0);
+                }
+            }
+            StartupTab::Services => {
+                for (index, entry) in state.services.iter().enumerate() {
+                    if service_row(ui, entry, index) {
+                        toggle_index = Some(index);
+                    }
+                    ui.add_space(4.0);
+                }
             }
         });
 
     if let Some(index) = toggle_index {
-        state.toggle(index);
+        state.request_toggle(index);
     }
 }
 
+fn confirmation_modal(ctx: &egui::Context, state: &mut StartupState) {
+    let Some(pending) = state.pending.clone() else {
+        return;
+    };
+    let mut action = ModalAction::None;
+    let service = pending.tab == StartupTab::Services;
+    let color = if pending.enabling { SUCCESS } else { WARNING };
+
+    let screen = ctx.content_rect();
+    egui::Area::new(egui::Id::new("startup-confirm-backdrop"))
+        .order(egui::Order::Middle)
+        .fixed_pos(screen.min)
+        .show(ctx, |ui| {
+            let (rect, response) = ui.allocate_exact_size(screen.size(), Sense::click());
+            ui.painter()
+                .rect_filled(rect, 0.0, Color32::from_black_alpha(120));
+            if response.clicked() {
+                action = ModalAction::Cancel;
+            }
+        });
+
+    egui::Window::new("startup-confirm")
+        .id(egui::Id::new("startup-confirm-window"))
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(false)
+        .movable(false)
+        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .order(egui::Order::Foreground)
+        .frame(
+            Frame::new()
+                .fill(SURFACE)
+                .stroke(Stroke::new(1.0, BORDER))
+                .corner_radius(CornerRadius::same(14))
+                .inner_margin(Margin::same(20)),
+        )
+        .show(ctx, |ui| {
+        ui.set_min_width(540.0);
+        ui.set_max_width(620.0);
+
+        modal_header(
+            ui,
+            if service { ph::GEAR_SIX } else { ph::CALENDAR_CHECK },
+            if pending.enabling {
+                if service {
+                    "Включить службу?"
+                } else {
+                    "Включить задачу?"
+                }
+            } else if service {
+                "Отключить службу?"
+            } else {
+                "Отключить задачу?"
+            },
+            if pending.enabling {
+                "Автозапуск будет восстановлен."
+            } else {
+                "Автозапуск будет отключён; отмена доступна этим же переключателем."
+            },
+            color,
+        );
+
+        ui.add_space(14.0);
+        Frame::new()
+            .fill(BG)
+            .corner_radius(CornerRadius::same(10))
+            .inner_margin(Margin::same(12))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new(&pending.title)
+                        .font(font_semibold(12.0))
+                        .color(TEXT),
+                );
+                ui.add_space(3.0);
+                ui.label(
+                    RichText::new(&pending.command)
+                        .font(FontId::new(9.0, FontFamily::Monospace))
+                        .color(TEXT_DIM),
+                );
+                if pending.system {
+                    ui.add_space(5.0);
+                    ui.label(
+                        RichText::new("Системный компонент Windows")
+                            .font(font(9.5))
+                            .color(WARNING),
+                    );
+                }
+            });
+
+        ui.add_space(10.0);
+        let warning = if service {
+            "Служба может быть нужна Windows или другому приложению. Работающая служба продолжит работу до остановки или перезагрузки."
+        } else {
+            "Задача может выполнять обновления или обслуживание. Уже запущенный экземпляр не останавливается."
+        };
+        Frame::new()
+            .fill(Color32::from_rgba_unmultiplied(255, 179, 71, 18))
+            .stroke(Stroke::new(
+                1.0,
+                Color32::from_rgba_unmultiplied(255, 179, 71, 60),
+            ))
+            .corner_radius(CornerRadius::same(10))
+            .inner_margin(Margin::same(12))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(ph::WARNING)
+                            .font(FontId::new(15.0, FontFamily::Proportional))
+                            .color(WARNING),
+                    );
+                    ui.label(RichText::new(warning).font(font(10.0)).color(TEXT_MUTED));
+                });
+            });
+
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if widgets::primary_button(
+                    ui,
+                    if pending.enabling {
+                        "Включить"
+                    } else if service {
+                        "Отключить службу"
+                    } else {
+                        "Отключить задачу"
+                    },
+                    ph::POWER,
+                    true,
+                )
+                .clicked()
+                {
+                    action = ModalAction::Confirm;
+                }
+                ui.add_space(8.0);
+                if widgets::secondary_button(ui, "Отмена").clicked() {
+                    action = ModalAction::Cancel;
+                }
+            });
+        });
+    });
+
+    if action == ModalAction::None
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        action = ModalAction::Cancel;
+    }
+    if action == ModalAction::None
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+    {
+        action = ModalAction::Confirm;
+    }
+
+    match action {
+        ModalAction::None => {}
+        ModalAction::Cancel => state.cancel_toggle(),
+        ModalAction::Confirm => state.confirm_toggle(),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ModalAction {
+    None,
+    Cancel,
+    Confirm,
+}
+
+fn modal_header(ui: &mut Ui, icon: &str, title: &str, subtitle: &str, color: Color32) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(42.0), Sense::hover());
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(11),
+            Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 30),
+        );
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            icon,
+            FontId::new(21.0, FontFamily::Proportional),
+            color,
+        );
+
+        ui.add_space(12.0);
+        ui.vertical(|ui| {
+            ui.label(RichText::new(title).font(font_semibold(17.0)).color(TEXT));
+            ui.add_space(2.0);
+            ui.label(RichText::new(subtitle).font(font(10.5)).color(TEXT_MUTED));
+        });
+    });
+}
+
+fn empty_state(ui: &mut Ui, tab: StartupTab) {
+    let text = match tab {
+        StartupTab::Run => "Записи автозагрузки не найдены.",
+        StartupTab::Tasks => "Задачи планировщика не найдены.",
+        StartupTab::Services => "Службы не найдены.",
+    };
+
+    Frame::new()
+        .fill(SURFACE)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::same(16))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(ph::INFO)
+                        .font(FontId::new(17.0, FontFamily::Proportional))
+                        .color(TEXT_DIM),
+                );
+                ui.label(RichText::new(text).font(font(10.5)).color(TEXT_MUTED));
+            });
+        });
+}
+
 fn startup_row(ui: &mut Ui, entry: &StartupEntry, index: usize) -> bool {
+    let command = if entry.command.is_empty() {
+        "—"
+    } else {
+        entry.command.as_str()
+    };
+    toggle_row(
+        ui,
+        "startup",
+        index,
+        &entry.title,
+        command,
+        entry.enabled,
+        entry.source.short_label(),
+        entry_icon(entry),
+        if entry.enabled {
+            source_color(entry.source)
+        } else {
+            TEXT_DIM
+        },
+        &format!("{}\n{}", entry.source.label(), entry.command),
+    )
+}
+
+fn task_row(ui: &mut Ui, entry: &TaskEntry, index: usize) -> bool {
+    let command = if entry.command.is_empty() {
+        entry.path.as_str()
+    } else {
+        entry.command.as_str()
+    };
+    toggle_row(
+        ui,
+        "tasks",
+        index,
+        &entry.title,
+        command,
+        entry.enabled,
+        if entry.system {
+            "Windows"
+        } else {
+            "Задача"
+        },
+        if entry.enabled {
+            ph::CALENDAR_CHECK
+        } else {
+            ph::PROHIBIT
+        },
+        if entry.enabled { WARNING } else { TEXT_DIM },
+        &format!("{}\n{}\n{}", entry.path, entry.status, entry.command),
+    )
+}
+
+fn service_row(ui: &mut Ui, entry: &ServiceEntry, index: usize) -> bool {
+    let command = format!("{} · {}", entry.status, entry.command);
+    let source = if entry.enabled {
+        entry.start_label.as_str()
+    } else {
+        "Отключена"
+    };
+    toggle_row(
+        ui,
+        "services",
+        index,
+        &entry.title,
+        &command,
+        entry.enabled,
+        source,
+        if entry.enabled {
+            ph::GEAR_SIX
+        } else {
+            ph::PROHIBIT
+        },
+        if entry.enabled { ACCENT } else { TEXT_DIM },
+        &format!(
+            "{}\n{} · {}\n{}",
+            entry.name, entry.status, entry.start_label, entry.command
+        ),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn toggle_row(
+    ui: &mut Ui,
+    id_salt: &str,
+    index: usize,
+    title: &str,
+    command: &str,
+    enabled: bool,
+    source: &str,
+    icon: &str,
+    accent: Color32,
+    tooltip: &str,
+) -> bool {
     let (rect, row_response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 58.0), Sense::hover());
-    let hovered = row_response.hovered();
-    if hovered {
+    if row_response.hovered() {
         ui.painter()
             .rect_filled(rect, CornerRadius::same(9), SURFACE_2);
     }
 
-    let accent = if entry.enabled {
-        source_color(entry.source)
-    } else {
-        TEXT_DIM
-    };
     ui.painter().text(
         rect.left_center() + Vec2::new(20.0, 0.0),
         Align2::LEFT_CENTER,
-        entry_icon(entry),
+        icon,
         FontId::new(19.0, FontFamily::Proportional),
         accent,
     );
     ui.painter().text(
         rect.left_center() + Vec2::new(46.0, -10.0),
         Align2::LEFT_CENTER,
-        shorten(&entry.title, 40),
+        shorten(title, 40),
         font_semibold(12.0),
-        if entry.enabled { TEXT } else { TEXT_MUTED },
+        if enabled { TEXT } else { TEXT_MUTED },
     );
-    let command = if entry.command.is_empty() {
-        "—"
-    } else {
-        entry.command.as_str()
-    };
     ui.painter().text(
         rect.left_center() + Vec2::new(46.0, 9.0),
         Align2::LEFT_CENTER,
-        shorten(command, 70),
+        shorten(if command.is_empty() { "—" } else { command }, 70),
         FontId::new(9.0, FontFamily::Monospace),
         TEXT_DIM,
     );
@@ -234,11 +633,11 @@ fn startup_row(ui: &mut Ui, entry: &StartupEntry, index: usize) -> bool {
     );
     let switch_response = ui.interact(
         switch_rect,
-        ui.id().with(("startup-toggle", index)),
+        ui.id().with(("startup-toggle", id_salt, index)),
         Sense::click(),
     );
-    let t = ui.ctx().animate_bool(switch_response.id, entry.enabled);
-    let background = if entry.enabled {
+    let t = ui.ctx().animate_bool(switch_response.id, enabled);
+    let background = if enabled {
         ACCENT
     } else {
         Color32::from_rgb(72, 72, 82)
@@ -255,21 +654,20 @@ fn startup_row(ui: &mut Ui, entry: &StartupEntry, index: usize) -> bool {
     ui.painter().text(
         egui::pos2(switch_rect.left() - 10.0, rect.center().y),
         Align2::RIGHT_CENTER,
-        entry.source.short_label(),
+        source,
         font(9.0),
-        if entry.enabled { accent } else { TEXT_DIM },
+        if enabled { accent } else { TEXT_DIM },
     );
 
     let switch_response = switch_response
-        .on_hover_text(if entry.enabled {
-            "Отключить автозагрузку"
+        .on_hover_text(if enabled {
+            "Отключить автозапуск"
         } else {
-            "Включить автозагрузку"
+            "Включить автозапуск"
         })
         .on_hover_cursor(CursorIcon::PointingHand);
 
-    let row_response = row_response.on_hover_text(&entry.command);
-    let _ = row_response;
+    let _ = row_response.on_hover_text(tooltip);
 
     switch_response.clicked()
 }

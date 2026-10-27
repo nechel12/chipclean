@@ -67,6 +67,10 @@ pub fn startup_quarantine_dir() -> PathBuf {
     log_dir().join("startup-disabled")
 }
 
+pub fn disabled_services_path() -> PathBuf {
+    log_dir().join("disabled-services.json")
+}
+
 pub fn traces_store_path() -> PathBuf {
     log_dir().join("traces-quarantine.json")
 }

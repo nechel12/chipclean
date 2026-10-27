@@ -43,7 +43,8 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             |ui| {
                 rule_row(ui, "Удаление: только после предпросмотра");
                 rule_row(ui, "Загрузки: отдельный шаг подтверждения");
-                rule_row(ui, "Корзина: отдельный шаг подтверждения");
+                rule_row(ui, "Корзина и карантин: отдельный шаг");
+                rule_row(ui, "Задачи и службы: подтверждение перед изменением");
                 rule_row(ui, "Все операции пишутся в журнал");
             },
         );
@@ -81,6 +82,17 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             );
             ui.label(
                 RichText::new(config::backups_dir().display().to_string())
+                    .font(font(9.0))
+                    .color(TEXT_MUTED),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("Состояние служб")
+                    .font(font(9.5))
+                    .color(TEXT_DIM),
+            );
+            ui.label(
+                RichText::new(config::disabled_services_path().display().to_string())
                     .font(font(9.0))
                     .color(TEXT_MUTED),
             );
