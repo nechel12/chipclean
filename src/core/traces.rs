@@ -30,6 +30,7 @@ use crate::{
     core::{
         journal::Journal,
         model::Risk,
+        path_guard,
         uninstall::{self, ProgramCommand, ProgramEntry},
     },
 };
@@ -292,24 +293,52 @@ fn resolve_shortcut(
 fn shortcut_files() -> Vec<PathBuf> {
     let mut files = BTreeSet::new();
 
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        let root = PathBuf::from(appdata).join(r"Microsoft\Windows\Start Menu\Programs");
+    for root in start_menu_roots() {
         collect_lnk_recursive(&root, &mut files);
     }
-    if let Some(programdata) = std::env::var_os("ProgramData") {
-        let root = PathBuf::from(programdata).join(r"Microsoft\Windows\Start Menu\Programs");
-        collect_lnk_recursive(&root, &mut files);
-    }
-    if let Some(userprofile) = std::env::var_os("USERPROFILE") {
-        let desktop = PathBuf::from(userprofile).join("Desktop");
-        collect_lnk_top_level(&desktop, &mut files);
-    }
-    if let Some(public) = std::env::var_os("PUBLIC") {
-        let desktop = PathBuf::from(public).join("Desktop");
-        collect_lnk_top_level(&desktop, &mut files);
+    for root in desktop_roots() {
+        collect_lnk_top_level(&root, &mut files);
     }
 
     files.into_iter().collect()
+}
+
+fn start_menu_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        roots.push(PathBuf::from(appdata).join(r"Microsoft\Windows\Start Menu\Programs"));
+    }
+    if let Some(programdata) = std::env::var_os("ProgramData") {
+        roots.push(PathBuf::from(programdata).join(r"Microsoft\Windows\Start Menu\Programs"));
+    }
+
+    roots
+}
+
+fn desktop_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    if let Some(userprofile) = std::env::var_os("USERPROFILE") {
+        roots.push(PathBuf::from(userprofile).join("Desktop"));
+    }
+    if let Some(public) = std::env::var_os("PUBLIC") {
+        roots.push(PathBuf::from(public).join("Desktop"));
+    }
+
+    roots
+}
+
+fn trace_original_roots(category: TraceCategoryId) -> Vec<PathBuf> {
+    match category {
+        TraceCategoryId::BrokenShortcuts => {
+            let mut roots = start_menu_roots();
+            roots.extend(desktop_roots());
+            roots
+        }
+        TraceCategoryId::OrphanedFolders => program_files_roots(),
+        TraceCategoryId::DeepLeftovers => appdata_roots(),
+    }
 }
 
 fn collect_lnk_recursive(root: &Path, files: &mut BTreeSet<PathBuf>) {
@@ -847,10 +876,27 @@ fn quarantine_entries_with_paths(
 }
 
 pub fn restore_quarantined(entry: &QuarantinedTrace) -> Result<()> {
-    restore_quarantined_with_paths(entry, &config::traces_store_path())
+    let roots = trace_original_roots(entry.category);
+    let direct_child = matches!(
+        entry.category,
+        TraceCategoryId::OrphanedFolders | TraceCategoryId::DeepLeftovers
+    );
+    restore_quarantined_with_paths(
+        entry,
+        &config::traces_store_path(),
+        &config::traces_quarantine_dir(),
+        &roots,
+        direct_child,
+    )
 }
 
-fn restore_quarantined_with_paths(entry: &QuarantinedTrace, store_path: &Path) -> Result<()> {
+fn restore_quarantined_with_paths(
+    entry: &QuarantinedTrace,
+    store_path: &Path,
+    quarantine_dir: &Path,
+    allowed_roots: &[PathBuf],
+    direct_child: bool,
+) -> Result<()> {
     if entry.original_path.exists() {
         bail!(
             "Исходный путь уже существует: {}",
@@ -863,30 +909,36 @@ fn restore_quarantined_with_paths(entry: &QuarantinedTrace, store_path: &Path) -
             entry.stored_path.display()
         );
     }
-    if let Some(parent) = entry.original_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("не удалось создать {}", parent.display()))?;
+    path_guard::ensure_not_reparse(&entry.stored_path)?;
+    let quarantine_roots = [quarantine_dir.to_path_buf()];
+    path_guard::ensure_existing_within(&entry.stored_path, &quarantine_roots)?;
+
+    let destination = path_guard::canonical_destination(&entry.original_path)?;
+    if direct_child {
+        path_guard::ensure_direct_child(&destination, allowed_roots)?;
+    } else {
+        path_guard::ensure_within(&destination, allowed_roots)?;
     }
 
-    fs::rename(&entry.stored_path, &entry.original_path).with_context(|| {
+    fs::rename(&entry.stored_path, &destination).with_context(|| {
         format!(
             "не удалось вернуть {} на место {}",
             entry.stored_path.display(),
-            entry.original_path.display()
+            destination.display()
         )
     })?;
 
     let mut store = load_store(store_path)?;
     store.entries.retain(|item| item != entry);
     if let Err(err) = save_store(store_path, &store) {
-        let _ = fs::rename(&entry.original_path, &entry.stored_path);
+        let _ = fs::rename(&destination, &entry.stored_path);
         return Err(err);
     }
 
     journal(json!({
         "ts": now(),
         "event": "trace_restored",
-        "original": entry.original_path.display().to_string(),
+        "original": destination.display().to_string(),
     }));
 
     Ok(())
@@ -1016,7 +1068,15 @@ mod tests {
         let store = load_store(&store_path).unwrap();
         assert_eq!(store.entries.len(), 1);
 
-        restore_quarantined_with_paths(&store.entries[0], &store_path).unwrap();
+        let roots = vec![dir.path().to_path_buf()];
+        restore_quarantined_with_paths(
+            &store.entries[0],
+            &store_path,
+            &quarantine_dir,
+            &roots,
+            false,
+        )
+        .unwrap();
         assert!(original.exists());
         assert!(load_store(&store_path).unwrap().entries.is_empty());
     }
@@ -1080,9 +1140,99 @@ mod tests {
         quarantine_entries_with_paths(&[entry], &store_path, &quarantine_dir).unwrap();
         assert!(!original.exists());
         let store = load_store(&store_path).unwrap();
-        restore_quarantined_with_paths(&store.entries[0], &store_path).unwrap();
+        let roots = vec![dir.path().to_path_buf()];
+        restore_quarantined_with_paths(
+            &store.entries[0],
+            &store_path,
+            &quarantine_dir,
+            &roots,
+            true,
+        )
+        .unwrap();
         assert!(original.exists());
         assert!(original.join("unins000.exe").exists());
+    }
+
+    #[test]
+    fn refuses_to_restore_from_outside_quarantine() {
+        let dir = tempfile::tempdir().unwrap();
+        let quarantine = dir.path().join("quarantine");
+        let allowed = dir.path().join("Allowed");
+        fs::create_dir_all(&quarantine).unwrap();
+        fs::create_dir_all(&allowed).unwrap();
+
+        let stored = dir.path().join("outside.lnk");
+        fs::write(&stored, b"shortcut").unwrap();
+        let original = allowed.join("restored.lnk");
+        let store_path = dir.path().join("store.json");
+        let entry = QuarantinedTrace {
+            category: TraceCategoryId::BrokenShortcuts,
+            title: "restored.lnk".to_owned(),
+            detail: "test".to_owned(),
+            original_path: original.clone(),
+            stored_path: stored.clone(),
+            quarantined_at: now(),
+        };
+        save_store(
+            &store_path,
+            &TraceStore {
+                entries: vec![entry.clone()],
+            },
+        )
+        .unwrap();
+
+        let result = restore_quarantined_with_paths(
+            &entry,
+            &store_path,
+            &quarantine,
+            std::slice::from_ref(&allowed),
+            false,
+        );
+        assert!(result.is_err());
+        assert!(stored.exists());
+        assert!(!original.exists());
+    }
+
+    #[test]
+    fn refuses_to_restore_outside_allowed_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let quarantine = dir.path().join("quarantine");
+        let allowed = dir.path().join("Allowed");
+        let outside = dir.path().join("Outside");
+        fs::create_dir_all(&quarantine).unwrap();
+        fs::create_dir_all(&allowed).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+
+        let stored = quarantine.join("item.lnk");
+        fs::write(&stored, b"shortcut").unwrap();
+        let original = outside.join("restored.lnk");
+        let store_path = dir.path().join("store.json");
+        let entry = QuarantinedTrace {
+            category: TraceCategoryId::BrokenShortcuts,
+            title: "restored.lnk".to_owned(),
+            detail: "test".to_owned(),
+            original_path: original.clone(),
+            stored_path: stored.clone(),
+            quarantined_at: now(),
+        };
+        save_store(
+            &store_path,
+            &TraceStore {
+                entries: vec![entry.clone()],
+            },
+        )
+        .unwrap();
+
+        let result = restore_quarantined_with_paths(
+            &entry,
+            &store_path,
+            &quarantine,
+            std::slice::from_ref(&allowed),
+            false,
+        );
+        assert!(result.is_err());
+        assert!(stored.exists());
+        assert!(!original.exists());
     }
 
     #[test]

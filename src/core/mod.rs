@@ -4,6 +4,7 @@ pub mod community;
 pub mod community_state;
 pub mod journal;
 pub mod model;
+pub mod path_guard;
 pub mod privacy;
 pub mod privacy_state;
 pub mod quarantine;

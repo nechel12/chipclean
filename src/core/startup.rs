@@ -15,6 +15,7 @@ use crate::{
     config,
     core::{
         journal::Journal,
+        path_guard,
         registry::{self, RegistryHive, STARTUP_KEYS},
     },
 };
@@ -213,11 +214,16 @@ fn scan_entries_with_store(store_path: &Path) -> Result<Vec<StartupEntry>> {
 }
 
 pub fn toggle_entry(entry: &StartupEntry) -> Result<String> {
+    let startup_roots: Vec<PathBuf> = startup_folders()
+        .into_iter()
+        .map(|(_, folder)| folder)
+        .collect();
     toggle_entry_with_paths(
         entry,
         &config::startup_store_path(),
         &config::backups_dir(),
         &config::startup_quarantine_dir(),
+        &startup_roots,
     )
 }
 
@@ -226,6 +232,7 @@ fn toggle_entry_with_paths(
     store_path: &Path,
     backup_dir: &Path,
     quarantine_dir: &Path,
+    startup_roots: &[PathBuf],
 ) -> Result<String> {
     match (&entry.kind, entry.enabled) {
         (
@@ -237,9 +244,11 @@ fn toggle_entry_with_paths(
             true,
         ) => disable_registry(*hive, key_path, value_name, store_path, backup_dir),
         (StartupEntryKind::Folder { path }, true) => {
-            disable_folder(path, store_path, quarantine_dir)
+            disable_folder(path, store_path, quarantine_dir, startup_roots)
         }
-        (StartupEntryKind::Disabled(disabled), false) => enable_disabled(disabled, store_path),
+        (StartupEntryKind::Disabled(disabled), false) => {
+            enable_disabled(disabled, store_path, quarantine_dir, startup_roots)
+        }
         _ => bail!("Состояние записи изменилось; обновите список."),
     }
 }
@@ -314,10 +323,17 @@ fn disable_registry(
     Ok(format!("Отключено. Бэкап: {}", backup.display()))
 }
 
-fn disable_folder(path: &Path, store_path: &Path, quarantine_dir: &Path) -> Result<String> {
+fn disable_folder(
+    path: &Path,
+    store_path: &Path,
+    quarantine_dir: &Path,
+    startup_roots: &[PathBuf],
+) -> Result<String> {
     if !path.is_file() {
         bail!("Элемент автозагрузки не является файлом");
     }
+    path_guard::ensure_not_reparse(path)?;
+    path_guard::ensure_direct_child(path, startup_roots)?;
 
     fs::create_dir_all(quarantine_dir)
         .with_context(|| format!("не удалось создать {}", quarantine_dir.display()))?;
@@ -367,7 +383,12 @@ fn disable_folder(path: &Path, store_path: &Path, quarantine_dir: &Path) -> Resu
     Ok(format!("Перемещено в карантин: {}", stored_path.display()))
 }
 
-fn enable_disabled(disabled: &DisabledEntry, store_path: &Path) -> Result<String> {
+fn enable_disabled(
+    disabled: &DisabledEntry,
+    store_path: &Path,
+    quarantine_dir: &Path,
+    startup_roots: &[PathBuf],
+) -> Result<String> {
     let mut store = load_store(store_path)?;
     let position = store
         .entries
@@ -423,22 +444,24 @@ fn enable_disabled(disabled: &DisabledEntry, store_path: &Path) -> Result<String
             if !stored_path.is_file() {
                 bail!("Файл карантина не найден: {}", stored_path.display());
             }
-            if let Some(parent) = original_path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("не удалось создать {}", parent.display()))?;
-            }
+            path_guard::ensure_not_reparse(stored_path)?;
+            let quarantine_roots = [quarantine_dir.to_path_buf()];
+            path_guard::ensure_existing_within(stored_path, &quarantine_roots)?;
 
-            fs::rename(stored_path, original_path).with_context(|| {
+            let destination = path_guard::canonical_destination(original_path)?;
+            path_guard::ensure_direct_child(&destination, startup_roots)?;
+
+            fs::rename(stored_path, &destination).with_context(|| {
                 format!(
                     "не удалось вернуть {} на место {}",
                     stored_path.display(),
-                    original_path.display()
+                    destination.display()
                 )
             })?;
 
             store.entries.remove(position);
             if let Err(err) = save_store(store_path, &store) {
-                let _ = fs::rename(original_path, stored_path);
+                let _ = fs::rename(&destination, stored_path);
                 return Err(
                     err.context("не удалось сохранить состояние; файл возвращён в карантин")
                 );
@@ -449,7 +472,7 @@ fn enable_disabled(disabled: &DisabledEntry, store_path: &Path) -> Result<String
                 "event": "startup_folder_enabled",
                 "source": disabled.source.label(),
                 "title": disabled.title,
-                "original": original_path.display().to_string(),
+                "original": destination.display().to_string(),
             }));
 
             Ok("Включено".to_owned())
@@ -624,7 +647,8 @@ mod tests {
         let quarantine_dir = dir.path().join("quarantine");
 
         let message =
-            toggle_entry_with_paths(&entry, &store_path, &backup_dir, &quarantine_dir).unwrap();
+            toggle_entry_with_paths(&entry, &store_path, &backup_dir, &quarantine_dir, &[])
+                .unwrap();
         assert!(message.contains("Отключено"));
         assert!(
             CURRENT_USER
@@ -648,7 +672,8 @@ mod tests {
         };
 
         let message =
-            toggle_entry_with_paths(&disabled, &store_path, &backup_dir, &quarantine_dir).unwrap();
+            toggle_entry_with_paths(&disabled, &store_path, &backup_dir, &quarantine_dir, &[])
+                .unwrap();
         assert_eq!(message, "Включено");
         assert_eq!(
             CURRENT_USER
@@ -686,7 +711,14 @@ mod tests {
             },
         };
 
-        toggle_entry_with_paths(&entry, &store_path, &backup_dir, &quarantine_dir).unwrap();
+        toggle_entry_with_paths(
+            &entry,
+            &store_path,
+            &backup_dir,
+            &quarantine_dir,
+            std::slice::from_ref(&original_dir),
+        )
+        .unwrap();
         assert!(!original.exists());
         let store = load_store(&store_path).unwrap();
         assert_eq!(store.entries.len(), 1);
@@ -699,8 +731,117 @@ mod tests {
             kind: StartupEntryKind::Disabled(store.entries[0].clone()),
         };
 
-        toggle_entry_with_paths(&disabled, &store_path, &backup_dir, &quarantine_dir).unwrap();
+        toggle_entry_with_paths(
+            &disabled,
+            &store_path,
+            &backup_dir,
+            &quarantine_dir,
+            std::slice::from_ref(&original_dir),
+        )
+        .unwrap();
         assert!(original.exists());
         assert!(load_store(&store_path).unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn refuses_to_restore_folder_outside_startup_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let startup = dir.path().join("Startup");
+        let outside = dir.path().join("Outside");
+        let quarantine = dir.path().join("quarantine");
+        fs::create_dir_all(&startup).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(&quarantine).unwrap();
+
+        let stored = quarantine.join("item.lnk");
+        fs::write(&stored, b"shortcut").unwrap();
+        let original = outside.join("item.lnk");
+        let store_path = dir.path().join("store.json");
+        let disabled = DisabledEntry {
+            source: StartupSource::UserFolder,
+            title: "item.lnk".to_owned(),
+            command: original.display().to_string(),
+            disabled_at: now(),
+            kind: DisabledKind::Folder {
+                original_path: original.clone(),
+                stored_path: stored.clone(),
+            },
+        };
+        save_store(
+            &store_path,
+            &DisabledStore {
+                entries: vec![disabled.clone()],
+            },
+        )
+        .unwrap();
+        let entry = StartupEntry {
+            title: disabled.title.clone(),
+            command: disabled.command.clone(),
+            source: disabled.source,
+            enabled: false,
+            kind: StartupEntryKind::Disabled(disabled),
+        };
+
+        let result = toggle_entry_with_paths(
+            &entry,
+            &store_path,
+            &dir.path().join("backups"),
+            &quarantine,
+            std::slice::from_ref(&startup),
+        );
+        assert!(result.is_err());
+        assert!(stored.exists());
+        assert!(!original.exists());
+        assert_eq!(load_store(&store_path).unwrap().entries.len(), 1);
+    }
+
+    #[test]
+    fn refuses_to_restore_folder_from_outside_quarantine() {
+        let dir = tempfile::tempdir().unwrap();
+        let startup = dir.path().join("Startup");
+        let quarantine = dir.path().join("quarantine");
+        fs::create_dir_all(&startup).unwrap();
+        fs::create_dir_all(&quarantine).unwrap();
+
+        let stored = dir.path().join("outside.lnk");
+        fs::write(&stored, b"shortcut").unwrap();
+        let original = startup.join("item.lnk");
+        let store_path = dir.path().join("store.json");
+        let disabled = DisabledEntry {
+            source: StartupSource::UserFolder,
+            title: "item.lnk".to_owned(),
+            command: original.display().to_string(),
+            disabled_at: now(),
+            kind: DisabledKind::Folder {
+                original_path: original.clone(),
+                stored_path: stored.clone(),
+            },
+        };
+        save_store(
+            &store_path,
+            &DisabledStore {
+                entries: vec![disabled.clone()],
+            },
+        )
+        .unwrap();
+        let entry = StartupEntry {
+            title: disabled.title.clone(),
+            command: disabled.command.clone(),
+            source: disabled.source,
+            enabled: false,
+            kind: StartupEntryKind::Disabled(disabled),
+        };
+
+        let result = toggle_entry_with_paths(
+            &entry,
+            &store_path,
+            &dir.path().join("backups"),
+            &quarantine,
+            std::slice::from_ref(&startup),
+        );
+        assert!(result.is_err());
+        assert!(stored.exists());
+        assert!(!original.exists());
+        assert_eq!(load_store(&store_path).unwrap().entries.len(), 1);
     }
 }
