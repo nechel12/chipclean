@@ -959,6 +959,7 @@ mod tests {
     fn cleans_a_file_and_registry_value() {
         use windows_registry::CURRENT_USER;
 
+        let _guard = crate::core::registry_test_guard();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("personal.dat");
         fs::write(&path, b"personal").unwrap();
@@ -1001,6 +1002,7 @@ mod tests {
     fn deletes_all_values_without_removing_the_key() {
         use windows_registry::CURRENT_USER;
 
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanPrivacyAll-{}-{}",
             std::process::id(),
@@ -1046,6 +1048,7 @@ mod tests {
     fn recurses_into_subkeys_for_a_specific_value() {
         use windows_registry::CURRENT_USER;
 
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanPrivacyRecurse-{}-{}",
             std::process::id(),
@@ -1092,6 +1095,7 @@ mod tests {
     fn remove_self_deletes_the_key_tree() {
         use windows_registry::CURRENT_USER;
 
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanPrivacyTree-{}-{}",
             std::process::id(),

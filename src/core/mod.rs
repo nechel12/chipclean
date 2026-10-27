@@ -28,3 +28,11 @@ pub mod traces;
 pub mod traces_state;
 pub mod uninstall;
 pub mod uninstall_state;
+
+/// Tests that create keys or call reg.exe export must not run concurrently:
+/// parallel backups occasionally fail with access denied on a busy hive.
+#[cfg(test)]
+pub(crate) fn registry_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}

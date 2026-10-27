@@ -600,6 +600,7 @@ mod tests {
 
     #[test]
     fn writes_and_deletes_test_values() {
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanEditor-{}-{}",
             std::process::id(),
@@ -628,6 +629,7 @@ mod tests {
 
     #[test]
     fn creates_and_removes_test_key() {
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanEditorKey-{}-{}",
             std::process::id(),

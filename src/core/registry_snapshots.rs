@@ -451,6 +451,7 @@ mod tests {
 
     #[test]
     fn captures_a_small_root() {
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanSnapshot-{}-{}",
             std::process::id(),

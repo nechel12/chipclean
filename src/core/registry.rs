@@ -880,6 +880,7 @@ mod tests {
 
     #[test]
     fn backs_up_and_deletes_a_test_value() {
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanTest-{}-{}",
             std::process::id(),
@@ -933,6 +934,7 @@ mod tests {
 
     #[test]
     fn reads_default_registry_value() {
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanDefault-{}-{}",
             std::process::id(),

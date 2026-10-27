@@ -614,6 +614,7 @@ mod tests {
 
     #[test]
     fn disables_and_enables_registry_value() {
+        let _guard = crate::core::registry_test_guard();
         let unique = format!(
             "ChipCleanStartup-{}-{}",
             std::process::id(),
