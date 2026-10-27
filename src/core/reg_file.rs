@@ -28,17 +28,21 @@ pub(crate) fn decode_text(bytes: &[u8]) -> String {
     }
 }
 
+pub(crate) fn parse_hive(value: &str) -> Option<EditorHive> {
+    match value.to_ascii_uppercase().as_str() {
+        "HKEY_CURRENT_USER" | "HKCU" => Some(EditorHive::Hkcu),
+        "HKEY_LOCAL_MACHINE" | "HKLM" => Some(EditorHive::Hklm),
+        "HKEY_CLASSES_ROOT" | "HKCR" => Some(EditorHive::Hkcr),
+        "HKEY_USERS" | "HKU" => Some(EditorHive::Hku),
+        "HKEY_CURRENT_CONFIG" | "HKCC" => Some(EditorHive::Hkcc),
+        _ => None,
+    }
+}
+
 pub(crate) fn parse_key_path(key: &str) -> Option<(EditorHive, String)> {
     let key = key.trim().trim_matches('\\');
     let (hive, path) = key.split_once('\\').unwrap_or((key, ""));
-    let hive = match hive.to_ascii_uppercase().as_str() {
-        "HKEY_CURRENT_USER" | "HKCU" => EditorHive::Hkcu,
-        "HKEY_LOCAL_MACHINE" | "HKLM" => EditorHive::Hklm,
-        "HKEY_CLASSES_ROOT" | "HKCR" => EditorHive::Hkcr,
-        "HKEY_USERS" | "HKU" => EditorHive::Hku,
-        "HKEY_CURRENT_CONFIG" | "HKCC" => EditorHive::Hkcc,
-        _ => return None,
-    };
+    let hive = parse_hive(hive)?;
     if path.is_empty() {
         return None;
     }

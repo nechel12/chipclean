@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use crate::core::{
     job::{self, Job},
+    reg_file,
+    registry_editor::{self, EditorHive},
     registry_snapshots::{self, SnapshotDiff, SnapshotMeta, SnapshotRoot},
 };
 
@@ -23,6 +25,9 @@ enum Event {
 
 pub struct SnapshotState {
     pub roots: Vec<SnapshotRoot>,
+    pub custom_roots: Vec<SnapshotRoot>,
+    pub custom_hive: EditorHive,
+    pub custom_path: String,
     pub selected_roots: HashSet<String>,
     pub name: String,
     pub snapshots: Vec<SnapshotMeta>,
@@ -44,6 +49,9 @@ impl SnapshotState {
             .unwrap_or_default();
         Self {
             roots,
+            custom_roots: Vec::new(),
+            custom_hive: EditorHive::Hkcu,
+            custom_path: String::new(),
             selected_roots,
             name: String::new(),
             snapshots: Vec::new(),
@@ -92,14 +100,79 @@ impl SnapshotState {
         self.selected_roots.contains(&root.display())
     }
 
+    pub fn add_custom_root(&mut self) {
+        if self.is_busy() {
+            return;
+        }
+        let typed = self.custom_path.trim().trim_matches('\\');
+        let (hive, path) = if typed.is_empty() {
+            (self.custom_hive, String::new())
+        } else if let Some(hive) = reg_file::parse_hive(typed) {
+            (hive, String::new())
+        } else if let Some((hive, path)) = reg_file::parse_key_path(typed) {
+            (hive, path)
+        } else {
+            (self.custom_hive, typed.to_owned())
+        };
+
+        if !path.is_empty() && registry_editor::open_key(hive, &path).is_err() {
+            self.set_error(format!(
+                "Раздел {} не найден.",
+                registry_editor::full_path(hive, &path)
+            ));
+            return;
+        }
+
+        let label = if path.is_empty() {
+            "Весь улей".to_owned()
+        } else {
+            "Своя ветка".to_owned()
+        };
+        let root = SnapshotRoot {
+            hive: hive.short().to_owned(),
+            path,
+            label,
+        };
+        let identity = root.display();
+        if self
+            .roots
+            .iter()
+            .chain(self.custom_roots.iter())
+            .any(|existing| existing.display() == identity)
+        {
+            self.selected_roots.insert(identity);
+            self.custom_path.clear();
+            self.set_ok("Эта ветка уже в списке и отмечена.".to_owned());
+            return;
+        }
+
+        self.selected_roots.insert(identity);
+        self.custom_roots.push(root);
+        self.custom_path.clear();
+        self.message = None;
+    }
+
+    pub fn remove_custom_root(&mut self, root: &SnapshotRoot) {
+        if self.is_busy() {
+            return;
+        }
+        let identity = root.display();
+        self.custom_roots
+            .retain(|existing| existing.display() != identity);
+        self.selected_roots.remove(&identity);
+    }
+
     pub fn create(&mut self) {
         if self.is_busy() {
             return;
         }
+        let mut seen = HashSet::new();
         let roots: Vec<SnapshotRoot> = self
             .roots
             .iter()
+            .chain(self.custom_roots.iter())
             .filter(|root| self.is_root_selected(root))
+            .filter(|root| seen.insert(root.display()))
             .cloned()
             .collect();
         if roots.is_empty() {
@@ -273,5 +346,82 @@ impl SnapshotState {
             text,
             is_error: true,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_hive_custom_root_uses_an_empty_path() {
+        let mut state = SnapshotState::new();
+        state.custom_hive = EditorHive::Hklm;
+        state.add_custom_root();
+
+        assert_eq!(state.custom_roots.len(), 1);
+        assert_eq!(state.custom_roots[0].display(), "HKLM");
+        assert!(state.is_root_selected(&state.custom_roots[0]));
+    }
+
+    #[test]
+    fn typed_hive_name_means_the_whole_hive() {
+        let mut state = SnapshotState::new();
+        state.custom_hive = EditorHive::Hklm;
+        state.custom_path = "HKEY_CURRENT_USER".to_owned();
+        state.add_custom_root();
+
+        assert_eq!(state.custom_roots.len(), 1);
+        assert_eq!(state.custom_roots[0].display(), "HKCU");
+        assert_eq!(state.custom_roots[0].label, "Весь улей");
+    }
+
+    #[test]
+    fn custom_root_accepts_a_full_path_and_deduplicates() {
+        let _guard = crate::core::registry_test_guard();
+        use windows_registry::CURRENT_USER;
+
+        let unique = format!(
+            "ChipCleanSnapshotRoot-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_micros()
+        );
+        let path = format!(r"Software\{unique}");
+        let key = CURRENT_USER.create(&path).unwrap();
+        drop(key);
+
+        let mut state = SnapshotState::new();
+        state.custom_hive = EditorHive::Hklm;
+        state.custom_path = format!("HKCU\\{path}");
+        state.add_custom_root();
+        assert_eq!(state.custom_roots.len(), 1);
+        assert_eq!(state.custom_roots[0].hive, "HKCU");
+        assert_eq!(state.custom_roots[0].path, path);
+
+        state.custom_path = format!("HKCU\\{path}");
+        state.add_custom_root();
+        assert_eq!(state.custom_roots.len(), 1);
+
+        let root = state.custom_roots[0].clone();
+        state.remove_custom_root(&root);
+        assert!(state.custom_roots.is_empty());
+        assert!(!state.is_root_selected(&root));
+
+        let _ = CURRENT_USER.remove_tree(&path);
+    }
+
+    #[test]
+    fn rejects_a_missing_custom_root() {
+        let mut state = SnapshotState::new();
+        state.custom_path = r"Software\ChipCleanMissingRoot-xyz".to_owned();
+        state.add_custom_root();
+
+        assert!(state.custom_roots.is_empty());
+        assert!(
+            state
+                .message
+                .as_ref()
+                .is_some_and(|message| message.is_error)
+        );
     }
 }

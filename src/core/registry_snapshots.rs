@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config,
     core::{
-        fs_atomic,
+        fs_atomic, reg_file,
         registry_editor::{EditorHive, full_path, join_path, list_values, open_key},
     },
 };
@@ -29,7 +29,11 @@ pub struct SnapshotRoot {
 
 impl SnapshotRoot {
     pub fn display(&self) -> String {
-        format!("{}\\{}", self.hive, self.path)
+        if self.path.trim().is_empty() {
+            self.hive.clone()
+        } else {
+            format!("{}\\{}", self.hive, self.path)
+        }
     }
 }
 
@@ -338,6 +342,7 @@ fn capture(roots: &[SnapshotRoot]) -> Result<SnapshotData> {
     }
 
     entries.sort_by(|left, right| left.path.cmp(&right.path));
+    entries.dedup_by(|left, right| left.path == right.path);
     Ok(SnapshotData { entries, truncated })
 }
 
@@ -357,11 +362,7 @@ fn key_map(entries: Vec<SnapshotKey>) -> HashMap<String, BTreeMap<String, Snapsh
 }
 
 fn parse_hive(value: &str) -> Result<EditorHive> {
-    match value.to_ascii_uppercase().as_str() {
-        "HKCU" => Ok(EditorHive::Hkcu),
-        "HKLM" => Ok(EditorHive::Hklm),
-        other => bail!("неизвестная ветка снимка: {other}"),
-    }
+    reg_file::parse_hive(value).ok_or_else(|| anyhow!("неизвестная ветка снимка: {value}"))
 }
 
 fn hash_bytes(ty: u32, bytes: &[u8]) -> u64 {
@@ -412,6 +413,26 @@ mod tests {
     fn hash_changes_with_type() {
         assert_ne!(hash_bytes(REG_SZ, b"a"), hash_bytes(REG_SZ, b"b"));
         assert_ne!(hash_bytes(REG_SZ, b"a"), hash_bytes(REG_DWORD, b"a"));
+    }
+
+    #[test]
+    fn parses_every_supported_hive() {
+        assert_eq!(parse_hive("hkcu").unwrap(), EditorHive::Hkcu);
+        assert_eq!(parse_hive("HKLM").unwrap(), EditorHive::Hklm);
+        assert_eq!(parse_hive("HKCR").unwrap(), EditorHive::Hkcr);
+        assert_eq!(parse_hive("HKEY_USERS").unwrap(), EditorHive::Hku);
+        assert_eq!(parse_hive("HKCC").unwrap(), EditorHive::Hkcc);
+        assert!(parse_hive("HKXX").is_err());
+    }
+
+    #[test]
+    fn displays_a_full_hive_without_a_trailing_slash() {
+        let root = SnapshotRoot {
+            hive: "HKLM".to_owned(),
+            path: String::new(),
+            label: "Весь улей".to_owned(),
+        };
+        assert_eq!(root.display(), "HKLM");
     }
 
     fn meta_with(id: &str, file: &str) -> SnapshotMeta {

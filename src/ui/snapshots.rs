@@ -8,6 +8,7 @@ use crate::{
     app::Page,
     config,
     core::{
+        registry_editor::EditorHive,
         registry_snapshots::{SnapshotMeta, SnapshotRoot, SnapshotValue},
         registry_snapshots_state::SnapshotState,
     },
@@ -61,7 +62,7 @@ fn info_card(ui: &mut Ui) {
                     );
                     ui.label(
                         RichText::new(
-                            "Снимок сохраняет разделы, значения и хеши данных. Сравнение покажет появившиеся, удалённые и изменённые записи; сами данные реестра не копируются.",
+                            "Снимок сохраняет разделы, значения и хеши данных. Можно выбрать готовые ветки, произвольный раздел или весь улей. Сравнение покажет появившиеся, удалённые и изменённые записи; сами данные реестра не копируются.",
                         )
                         .font(font(10.0))
                         .color(TEXT_MUTED),
@@ -130,11 +131,61 @@ fn create_card(ui: &mut Ui, state: &mut SnapshotState) {
                     state.toggle_root(root);
                 }
             }
+
+            ui.add_space(6.0);
+            widgets::line(ui);
+            ui.add_space(6.0);
+            ui.label(RichText::new("Своя ветка").font(font(9.5)).color(TEXT_DIM));
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("snapshot-custom-hive")
+                    .selected_text(state.custom_hive.label())
+                    .width(210.0)
+                    .show_ui(ui, |ui| {
+                        for hive in [
+                            EditorHive::Hkcu,
+                            EditorHive::Hklm,
+                            EditorHive::Hkcr,
+                            EditorHive::Hku,
+                            EditorHive::Hkcc,
+                        ] {
+                            ui.selectable_value(
+                                &mut state.custom_hive,
+                                hive,
+                                hive.label(),
+                            );
+                        }
+                    });
+                ui.add_space(6.0);
+                ui.add_enabled(
+                    !state.is_busy(),
+                    egui::TextEdit::singleline(&mut state.custom_path)
+                        .hint_text("Путь или полный путь; пусто — весь улей")
+                        .desired_width(330.0),
+                );
+                if widgets::secondary_button_icon(ui, "Добавить", ph::PLUS).clicked() {
+                    state.add_custom_root();
+                }
+            });
+            for root in state.custom_roots.clone() {
+                ui.horizontal(|ui| {
+                    let mut checked = state.is_root_selected(&root);
+                    if widgets::confirmation_checkbox(
+                        ui,
+                        &mut checked,
+                        &format!("{} · {}", root.label, root.display()),
+                    ) {
+                        state.toggle_root(&root);
+                    }
+                    if widgets::secondary_button(ui, "Убрать").clicked() {
+                        state.remove_custom_root(&root);
+                    }
+                });
+            }
             ui.add_space(4.0);
             widgets::inline_hint(
                 ui,
                 ph::INFO,
-                "Большие ветки могут создаваться несколько секунд. Лимит — 120 000 разделов.",
+                "Большие ветки могут создаваться несколько секунд; полный улей может занять минуты. Лимит — 120 000 разделов.",
                 TEXT_DIM,
             );
             if let Some(message) = &state.message {
