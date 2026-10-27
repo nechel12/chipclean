@@ -2,9 +2,11 @@ use std::{
     collections::HashSet,
     fs,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, OpenFlags};
 use serde_json::json;
 use walkdir::WalkDir;
 
@@ -23,6 +25,11 @@ pub struct FileSpec {
 }
 
 #[derive(Debug, Clone)]
+pub struct HistorySpec {
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct RegSpec {
     pub hive: EditorHive,
     pub path: String,
@@ -38,6 +45,7 @@ pub struct DataTarget {
     pub warning: Option<String>,
     pub default_enabled: bool,
     pub files: Vec<FileSpec>,
+    pub history: Vec<HistorySpec>,
     pub registry: Vec<RegSpec>,
     pub exclude_files: Vec<String>,
     pub exclude_registry: Vec<String>,
@@ -47,6 +55,7 @@ pub struct DataTarget {
 pub struct TargetScan {
     pub files: u64,
     pub bytes: u64,
+    pub history: u64,
     pub registry: u64,
     pub errors: u64,
 }
@@ -55,6 +64,7 @@ pub struct TargetScan {
 pub struct CleanReport {
     pub files: u64,
     pub bytes: u64,
+    pub history: u64,
     pub registry: u64,
     pub errors: Vec<String>,
 }
@@ -209,21 +219,16 @@ pub fn personal_targets() -> Vec<DataTarget> {
             )],
             vec![],
         ),
-        target(
+        history_target(
             "firefox_history",
             "Firefox: история",
-            "История посещений Mozilla Firefox",
+            "История посещений; закладки сохраняются",
             "Браузеры",
             false,
-            Some("Закройте Firefox перед очисткой; активный профиль может воссоздать файл."),
-            vec![
-                file(r"%APPDATA%\Mozilla\Firefox\Profiles\*\places.sqlite", false),
-                file(
-                    r"%APPDATA%\Mozilla\Firefox\Profiles\*\places.sqlite-wal",
-                    false,
-                ),
-            ],
-            vec![],
+            Some(
+                "Закройте Firefox перед очисткой; история посещений будет удалена, закладки сохранятся.",
+            ),
+            vec![r"%APPDATA%\Mozilla\Firefox\Profiles\*\places.sqlite"],
         ),
         target(
             "firefox_cookies",
@@ -256,6 +261,11 @@ pub fn scan_target(target: &DataTarget) -> TargetScan {
             }
             Err(_) => scan.errors += 1,
         }
+    }
+    for spec in &target.history {
+        let (visits, errors) = scan_history(spec);
+        scan.history += visits;
+        scan.errors += errors;
     }
     for spec in &target.registry {
         match scan_registry(spec, &target.exclude_registry) {
@@ -298,6 +308,12 @@ pub fn clean_target(target: &DataTarget) -> CleanReport {
         }
     }
 
+    for spec in &target.history {
+        let (visits, errors) = clean_history(spec);
+        report.history += visits;
+        report.errors.extend(errors);
+    }
+
     for spec in &target.registry {
         if is_excluded_registry(spec, &target.exclude_registry) {
             continue;
@@ -314,6 +330,7 @@ pub fn clean_target(target: &DataTarget) -> CleanReport {
         "target": target.id,
         "files": report.files,
         "bytes": report.bytes,
+        "history": report.history,
         "registry": report.registry,
         "errors": report.errors.len(),
     }));
@@ -360,6 +377,81 @@ fn collect_files(target: &DataTarget, spec: &FileSpec) -> Result<Vec<(PathBuf, u
         }
     }
     Ok(files)
+}
+
+fn scan_history(spec: &HistorySpec) -> (u64, u64) {
+    let mut visits = 0;
+    let mut errors = 0;
+    let mut seen = HashSet::new();
+    for path in expand_pattern(&spec.pattern) {
+        if !path.is_file() || !seen.insert(path.clone()) {
+            continue;
+        }
+        match count_visits(&path) {
+            Ok(count) => visits += count,
+            Err(err) => {
+                tracing::warn!(path = %path.display(), %err, "failed to scan Firefox history");
+                errors += 1;
+            }
+        }
+    }
+    (visits, errors)
+}
+
+fn clean_history(spec: &HistorySpec) -> (u64, Vec<String>) {
+    let mut visits = 0;
+    let mut errors = Vec::new();
+    let mut seen = HashSet::new();
+    for path in expand_pattern(&spec.pattern) {
+        if !path.is_file() || !seen.insert(path.clone()) {
+            continue;
+        }
+        match clean_history_file(&path) {
+            Ok(count) => visits += count,
+            Err(err) => errors.push(format!("{}: {err:#}", path.display())),
+        }
+    }
+    (visits, errors)
+}
+
+fn count_visits(path: &Path) -> Result<u64> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .with_context(|| format!("не удалось открыть {}", path.display()))?;
+    conn.busy_timeout(Duration::from_secs(2))?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM moz_historyvisits", [], |row| {
+        row.get(0)
+    })?;
+    Ok(count.max(0) as u64)
+}
+
+fn clean_history_file(path: &Path) -> Result<u64> {
+    let mut conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .with_context(|| format!("не удалось открыть {}", path.display()))?;
+    conn.busy_timeout(Duration::from_secs(5))?;
+    if !table_exists(&conn, "moz_bookmarks")? {
+        bail!("файл не похож на базу Firefox");
+    }
+    if !table_exists(&conn, "moz_historyvisits")? {
+        return Ok(0);
+    }
+
+    let tx = conn.transaction()?;
+    let deleted = tx.execute("DELETE FROM moz_historyvisits", [])?;
+    tx.commit()?;
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    Ok(deleted as u64)
+}
+
+fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
 }
 
 fn scan_registry(spec: &RegSpec, excludes: &[String]) -> Result<u64> {
@@ -465,6 +557,36 @@ fn file(pattern: &str, recurse: bool) -> FileSpec {
     }
 }
 
+fn history_spec(pattern: &str) -> HistorySpec {
+    HistorySpec {
+        pattern: pattern.to_owned(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn history_target(
+    id: &str,
+    title: &str,
+    summary: &str,
+    group: &str,
+    default_enabled: bool,
+    warning: Option<&str>,
+    patterns: Vec<&str>,
+) -> DataTarget {
+    let mut target = target(
+        id,
+        title,
+        summary,
+        group,
+        default_enabled,
+        warning,
+        Vec::new(),
+        Vec::new(),
+    );
+    target.history = patterns.into_iter().map(history_spec).collect();
+    target
+}
+
 fn reg_key(path: &str) -> RegSpec {
     RegSpec {
         hive: EditorHive::Hkcu,
@@ -492,6 +614,7 @@ fn target(
         warning: warning.map(str::to_owned),
         default_enabled,
         files,
+        history: Vec::new(),
         registry,
         exclude_files: Vec::new(),
         exclude_registry: Vec::new(),
@@ -540,6 +663,79 @@ mod tests {
         let scan = scan_target(&target);
         assert_eq!(scan.files, 1);
         assert_eq!(scan.bytes, 4);
+    }
+
+    #[test]
+    fn cleans_firefox_visits_and_keeps_bookmarks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("places.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT);
+             CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, fk INTEGER, title TEXT);
+             CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, place_id INTEGER, visit_date INTEGER);
+             INSERT INTO moz_places (id, url) VALUES (1, 'https://example.com');
+             INSERT INTO moz_bookmarks (id, fk, title) VALUES (1, 1, 'Example');
+             INSERT INTO moz_historyvisits (place_id, visit_date) VALUES (1, 123);",
+        )
+        .unwrap();
+        drop(conn);
+
+        let pattern = path.display().to_string();
+        let target = history_target(
+            "test",
+            "Test",
+            "Test",
+            "Test",
+            true,
+            None,
+            vec![pattern.as_str()],
+        );
+        let scan = scan_target(&target);
+        assert_eq!(scan.history, 1);
+        assert_eq!(scan.errors, 0);
+
+        let report = clean_target(&target);
+        assert_eq!(report.history, 1);
+        assert!(report.errors.is_empty());
+        assert!(path.exists());
+
+        let conn = Connection::open(&path).unwrap();
+        let visits: i64 = conn
+            .query_row("SELECT COUNT(*) FROM moz_historyvisits", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let bookmarks: i64 = conn
+            .query_row("SELECT COUNT(*) FROM moz_bookmarks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(visits, 0);
+        assert_eq!(bookmarks, 1);
+    }
+
+    #[test]
+    fn refuses_to_clean_a_foreign_sqlite_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("foreign.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT);")
+            .unwrap();
+        drop(conn);
+
+        let pattern = path.display().to_string();
+        let target = history_target(
+            "test",
+            "Test",
+            "Test",
+            "Test",
+            true,
+            None,
+            vec![pattern.as_str()],
+        );
+        let report = clean_target(&target);
+        assert_eq!(report.history, 0);
+        assert_eq!(report.errors.len(), 1);
+        assert!(path.exists());
     }
 
     #[test]

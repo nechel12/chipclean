@@ -74,7 +74,7 @@ fn info_card(ui: &mut Ui) {
                     );
                     ui.label(
                         RichText::new(
-                            "История браузеров, списки файлов, недавние документы и кэш уведомлений. Удаление личных данных необратимо; браузеры лучше закрыть.",
+                            "История браузеров, списки файлов, недавние документы и кэш уведомлений. В Firefox удаляются только посещения — закладки сохраняются. Удаление личных данных необратимо; браузеры лучше закрыть.",
                         )
                         .font(font(10.0))
                         .color(TEXT_MUTED),
@@ -91,7 +91,7 @@ fn info_card(ui: &mut Ui) {
 }
 
 fn summary(ui: &mut Ui, state: &mut PrivacyState) {
-    let (files, bytes, registry) = state.selected_stats();
+    let (files, bytes, history, registry) = state.selected_stats();
     Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
@@ -111,7 +111,7 @@ fn summary(ui: &mut Ui, state: &mut PrivacyState) {
                     );
                     ui.label(
                         RichText::new(format!(
-                            "{} · записей реестра: {registry}",
+                            "{} · посещений: {history} · записей реестра: {registry}",
                             format::files(files)
                         ))
                         .font(font(9.5))
@@ -127,8 +127,12 @@ fn summary(ui: &mut Ui, state: &mut PrivacyState) {
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::danger_button(ui, "Очистить выбранное", files > 0 || registry > 0)
-                        .clicked()
+                    if widgets::danger_button(
+                        ui,
+                        "Очистить выбранное",
+                        files > 0 || history > 0 || registry > 0,
+                    )
+                    .clicked()
                     {
                         state.request_clean();
                     }
@@ -223,15 +227,25 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
     );
 
     let right = match scan {
-        Some(scan) => format!(
-            "{}{}",
-            format::bytes(scan.bytes),
-            if scan.registry > 0 {
-                format!(" · {}", scan.registry)
-            } else {
-                String::new()
+        Some(scan) => {
+            let mut parts = Vec::new();
+            if scan.bytes > 0 {
+                parts.push(format::bytes(scan.bytes));
+            } else if scan.files > 0 {
+                parts.push(format::files(scan.files));
             }
-        ),
+            if scan.history > 0 {
+                parts.push(format::visits(scan.history));
+            }
+            if scan.registry > 0 {
+                parts.push(format!("записей: {}", scan.registry));
+            }
+            if parts.is_empty() {
+                "—".to_owned()
+            } else {
+                parts.join(" · ")
+            }
+        }
         None => "—".to_owned(),
     };
     ui.painter().text(
@@ -258,7 +272,7 @@ fn target_row(ui: &mut Ui, target: &DataTarget, scan: Option<&TargetScan>, selec
 }
 
 fn confirmation_modal(ctx: &egui::Context, state: &mut PrivacyState) {
-    let (files, bytes, registry) = state.selected_stats();
+    let (files, bytes, history, registry) = state.selected_stats();
     let selected = state.selected_targets();
     let mut action = ModalAction::None;
     let screen = ctx.content_rect();
@@ -295,7 +309,7 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut PrivacyState) {
             ui.add_space(12.0);
             ui.label(
                 RichText::new(format!(
-                    "{} · {} · записей реестра: {registry}",
+                    "{} · {} · посещений: {history} · записей реестра: {registry}",
                     format::files(files),
                     format::bytes(bytes)
                 ))

@@ -66,6 +66,7 @@ pub fn parse_database(path: &Path) -> Result<Vec<DataTarget>> {
             warning: section.get("Warning").map(str::to_owned),
             default_enabled: section.default_enabled(),
             files,
+            history: Vec::new(),
             registry,
             exclude_files: excludes.0,
             exclude_registry: excludes.1,

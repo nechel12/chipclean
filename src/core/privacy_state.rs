@@ -83,9 +83,10 @@ impl PrivacyState {
             .collect()
     }
 
-    pub fn selected_stats(&self) -> (u64, u64, u64) {
+    pub fn selected_stats(&self) -> (u64, u64, u64, u64) {
         let mut files = 0;
         let mut bytes = 0;
+        let mut history = 0;
         let mut registry = 0;
         for target in self
             .targets
@@ -95,15 +96,16 @@ impl PrivacyState {
             if let Some(scan) = self.scans.get(&target.id) {
                 files += scan.files;
                 bytes += scan.bytes;
+                history += scan.history;
                 registry += scan.registry;
             }
         }
-        (files, bytes, registry)
+        (files, bytes, history, registry)
     }
 
     pub fn request_clean(&mut self) {
-        let (files, bytes, registry) = self.selected_stats();
-        if files == 0 && bytes == 0 && registry == 0 {
+        let (files, bytes, history, registry) = self.selected_stats();
+        if files == 0 && bytes == 0 && history == 0 && registry == 0 {
             self.message = Some(Message {
                 text: "Выбранные разделы пусты.".to_owned(),
                 is_error: false,
@@ -135,19 +137,21 @@ impl PrivacyState {
             let target_report = privacy::clean_target(&target);
             report.files += target_report.files;
             report.bytes += target_report.bytes;
+            report.history += target_report.history;
             report.registry += target_report.registry;
             report.errors.extend(target_report.errors);
         }
         self.message = Some(Message {
             text: if report.errors.is_empty() {
                 format!(
-                    "Удалено файлов: {} · записей реестра: {}",
-                    report.files, report.registry
+                    "Удалено файлов: {} · записей реестра: {} · посещений: {}",
+                    report.files, report.registry, report.history
                 )
             } else {
                 format!(
-                    "Удалено файлов: {}; ошибок: {}",
+                    "Удалено файлов: {} · посещений: {}; ошибок: {}",
                     report.files,
+                    report.history,
                     report.errors.len()
                 )
             },

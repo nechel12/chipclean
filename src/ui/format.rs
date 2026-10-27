@@ -29,6 +29,10 @@ pub fn records(count: u64) -> String {
     plural(count, "запись", "записи", "записей")
 }
 
+pub fn visits(count: u64) -> String {
+    plural(count, "посещение", "посещения", "посещений")
+}
+
 fn plural(count: u64, one: &str, few: &str, many: &str) -> String {
     let word = if (11..=14).contains(&(count % 100)) {
         many
@@ -74,6 +78,16 @@ mod tests {
         assert_eq!(records(5), "5 записей");
         assert_eq!(records(11), "11 записей");
         assert_eq!(records(21), "21 запись");
+    }
+
+    #[test]
+    fn visit_word_forms() {
+        assert_eq!(visits(0), "0 посещений");
+        assert_eq!(visits(1), "1 посещение");
+        assert_eq!(visits(2), "2 посещения");
+        assert_eq!(visits(5), "5 посещений");
+        assert_eq!(visits(11), "11 посещений");
+        assert_eq!(visits(21), "21 посещение");
     }
 
     #[test]
