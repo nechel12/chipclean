@@ -91,6 +91,11 @@ fn initial_page() -> Page {
             "rollback" => Page::Rollback,
             "privacy" => Page::Privacy,
             "community" => Page::Community,
+            "registry" => Page::Registry,
+            "startup" => Page::Startup,
+            "traces" => Page::Traces,
+            "programs" => Page::Programs,
+            "settings" => Page::Settings,
             _ => Page::Cleanup,
         };
     }

@@ -230,7 +230,7 @@ fn import_at(preview: &ImportPreview, backups_root: &Path) -> Result<ImportRepor
         bail!("Файл изменился после предпросмотра; выберите его заново");
     }
 
-    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
+    let stamp = crate::core::unique_stamp();
     let safety_dir = backups_root.join(format!("import-{stamp}"));
     let mut report = ImportReport::default();
     let mut exported = BTreeSet::new();

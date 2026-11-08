@@ -187,7 +187,7 @@ pub fn create_snapshot(
     };
 
     let data = capture(roots, cancel)?;
-    let id = format!("snapshot-{}", Utc::now().format("%Y%m%d-%H%M%S-%3f"));
+    let id = format!("snapshot-{}", crate::core::unique_stamp());
     let file = format!("{id}.json");
     let dir = config::snapshots_dir();
     fs::create_dir_all(&dir).with_context(|| format!("не удалось создать {}", dir.display()))?;

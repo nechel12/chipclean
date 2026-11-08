@@ -315,7 +315,7 @@ fn restore_registry_at(backup: &RegistryBackup, backups_root: &Path) -> Result<R
         );
     }
 
-    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
+    let stamp = crate::core::unique_stamp();
     let safety_dir = backups_root.join(format!("pre-restore-{stamp}"));
     let mut report = RestoreReport::default();
 

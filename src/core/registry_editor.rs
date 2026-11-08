@@ -462,7 +462,7 @@ pub fn replace_values(hits: &[ReplaceHit], backup_dir: &Path) -> Result<ReplaceR
         }
     }
 
-    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
+    let stamp = crate::core::unique_stamp();
     let safety_dir = backup_dir.join(format!("replace-{stamp}"));
     let mut backed_up = BTreeSet::new();
     let mut report = ReplaceReport::default();
@@ -665,7 +665,7 @@ pub fn write_raw(key: &Key, name: &str, ty: u32, text: &str) -> Result<()> {
 pub fn backup_key_to(hive: EditorHive, path: &str, base_dir: &Path) -> Result<PathBuf> {
     fs::create_dir_all(base_dir)
         .with_context(|| format!("не удалось создать {}", base_dir.display()))?;
-    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
+    let stamp = crate::core::unique_stamp();
     let label = if path.trim().is_empty() {
         "root".to_owned()
     } else {

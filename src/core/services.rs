@@ -487,7 +487,7 @@ fn is_system_path(path: &str) -> bool {
     let root = std::env::var("SystemRoot")
         .unwrap_or_else(|_| r"C:\Windows".to_owned())
         .to_ascii_lowercase();
-    lower.starts_with(&root)
+    lower == root || lower.starts_with(&format!("{root}\\"))
 }
 
 fn pwstr_to_string(value: PWSTR) -> String {

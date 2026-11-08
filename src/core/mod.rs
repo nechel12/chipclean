@@ -40,3 +40,15 @@ pub(crate) fn registry_test_guard() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+/// Millisecond timestamp plus a process-wide counter so ids and file names
+/// created within the same millisecond do not collide.
+pub(crate) fn unique_stamp() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "{}-{}",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S-%3f"),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}

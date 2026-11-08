@@ -3,6 +3,9 @@ use std::{ffi::OsString, fs, path::Path};
 use anyhow::{Context, Result, anyhow, bail};
 
 pub fn move_path(source: &Path, destination: &Path) -> Result<()> {
+    if fs::symlink_metadata(destination).is_ok() {
+        bail!("цель уже существует: {}", destination.display());
+    }
     match fs::rename(source, destination) {
         Ok(()) => Ok(()),
         Err(rename_err) => match move_path_copy(source, destination) {
