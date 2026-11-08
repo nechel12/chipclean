@@ -213,6 +213,7 @@ impl eframe::App for ChipCleanApp {
         self.registry_editor.poll_search();
         self.registry_editor.poll_replace();
         self.registry_editor.poll_import();
+        self.registry_editor.poll_mutation();
         self.snapshots.poll();
         self.rollback.poll();
         self.privacy.poll_scan();

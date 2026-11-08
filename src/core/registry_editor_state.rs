@@ -35,12 +35,24 @@ enum ImportEvent {
     Imported(Result<ImportReport, String>),
 }
 
+enum MutationEvent {
+    Done(Result<std::path::PathBuf, String>),
+}
+
+enum PendingMutation {
+    CreateKey { parent: String, name: String },
+    Value { name: String },
+    DeleteValue,
+    DeleteKey { path: String },
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueMode {
     New,
     Edit,
 }
 
+#[derive(Clone)]
 pub enum EditorDialog {
     CreateKey {
         name: String,
@@ -94,6 +106,8 @@ pub struct EditorState {
     search_job: Option<Job<SearchEvent>>,
     replace_job: Option<Job<ReplaceEvent>>,
     import_job: Option<Job<ImportEvent>>,
+    mutation_job: Option<Job<MutationEvent>>,
+    pending_mutation: Option<PendingMutation>,
 }
 
 impl EditorState {
@@ -125,6 +139,8 @@ impl EditorState {
             search_job: None,
             replace_job: None,
             import_job: None,
+            mutation_job: None,
+            pending_mutation: None,
         }
     }
 
@@ -139,7 +155,7 @@ impl EditorState {
     }
 
     pub fn set_hive(&mut self, hive: EditorHive) {
-        if self.hive == hive || self.replace_applying {
+        if self.hive == hive || self.replace_applying || self.is_mutating() {
             return;
         }
         self.abort_search();
@@ -292,8 +308,12 @@ impl EditorState {
         self.import_job.is_some()
     }
 
+    pub fn is_mutating(&self) -> bool {
+        self.mutation_job.is_some()
+    }
+
     pub fn is_busy(&self) -> bool {
-        self.is_searching() || self.is_replace_busy() || self.is_importing()
+        self.is_searching() || self.is_replace_busy() || self.is_importing() || self.is_mutating()
     }
 
     pub fn poll_search(&mut self) {
@@ -755,40 +775,40 @@ impl EditorState {
     }
 
     pub fn close_dialog(&mut self) {
+        if self.is_mutating() {
+            return;
+        }
         self.abort_import();
         self.dialog = None;
     }
 
     pub fn submit_dialog(&mut self) {
-        let Some(dialog) = self.dialog.take() else {
+        if self.is_mutating() {
+            return;
+        }
+        let Some(dialog) = self.dialog.clone() else {
             return;
         };
+        let hive = self.hive;
+        let selected = self.selected.clone();
+        let backup_dir = config::backups_dir();
 
         match dialog {
             EditorDialog::CreateKey { name, .. } => {
-                match registry_editor::create_key(
-                    self.hive,
-                    &self.selected,
-                    &name,
-                    &config::backups_dir(),
-                ) {
-                    Ok(backup) => {
-                        let path = join_path(&self.selected, name.trim());
-                        self.children.remove(&self.selected);
-                        self.load_children(self.selected.clone());
-                        self.expand(self.selected.clone());
-                        self.selected = path;
-                        self.selected_value = None;
-                        self.load_values();
-                        self.set_ok(format!("Раздел создан. Бэкап: {}", backup.display()));
-                    }
-                    Err(err) => {
-                        self.dialog = Some(EditorDialog::CreateKey {
-                            name,
-                            error: Some(err.to_string()),
-                        });
-                    }
-                }
+                let trimmed = name.trim().to_owned();
+                self.pending_mutation = Some(PendingMutation::CreateKey {
+                    parent: selected.clone(),
+                    name: trimmed.clone(),
+                });
+                self.mutation_job = Some(Job::spawn(
+                    "chipclean-registry-mutation",
+                    move |_cancel, tx| {
+                        let result =
+                            registry_editor::create_key(hive, &selected, &trimmed, &backup_dir)
+                                .map_err(|err| err.to_string());
+                        let _ = tx.send(MutationEvent::Done(result));
+                    },
+                ));
             }
             EditorDialog::Value {
                 mode,
@@ -802,66 +822,138 @@ impl EditorState {
                     ValueMode::New => name.clone(),
                     ValueMode::Edit => original_name,
                 };
-                match registry_editor::write_value(
-                    self.hive,
-                    &self.selected,
-                    &value_name,
-                    ty,
-                    &text,
-                    &config::backups_dir(),
-                ) {
-                    Ok(backup) => {
-                        self.selected_value = Some(value_name);
-                        self.load_values();
-                        self.set_ok(format!("Сохранено. Бэкап: {}", backup.display()));
-                    }
-                    Err(err) => {
-                        self.dialog = Some(EditorDialog::Value {
-                            mode,
-                            original_name: value_name,
-                            name,
+                self.pending_mutation = Some(PendingMutation::Value {
+                    name: value_name.clone(),
+                });
+                self.mutation_job = Some(Job::spawn(
+                    "chipclean-registry-mutation",
+                    move |_cancel, tx| {
+                        let result = registry_editor::write_value(
+                            hive,
+                            &selected,
+                            &value_name,
                             ty,
-                            text,
-                            error: Some(err.to_string()),
-                        });
-                    }
-                }
+                            &text,
+                            &backup_dir,
+                        )
+                        .map_err(|err| err.to_string());
+                        let _ = tx.send(MutationEvent::Done(result));
+                    },
+                ));
             }
             EditorDialog::DeleteValue { name } => {
-                match registry_editor::delete_value(
-                    self.hive,
-                    &self.selected,
-                    &name,
-                    &config::backups_dir(),
-                ) {
-                    Ok(backup) => {
-                        self.selected_value = None;
-                        self.load_values();
-                        self.set_ok(format!("Значение удалено. Бэкап: {}", backup.display()));
-                    }
-                    Err(err) => self.set_error(err.to_string()),
-                }
+                self.pending_mutation = Some(PendingMutation::DeleteValue);
+                self.mutation_job = Some(Job::spawn(
+                    "chipclean-registry-mutation",
+                    move |_cancel, tx| {
+                        let result =
+                            registry_editor::delete_value(hive, &selected, &name, &backup_dir)
+                                .map_err(|err| err.to_string());
+                        let _ = tx.send(MutationEvent::Done(result));
+                    },
+                ));
             }
             EditorDialog::DeleteKey { path, .. } => {
-                match registry_editor::delete_key(self.hive, &path, &config::backups_dir()) {
-                    Ok(backup) => {
-                        let parent = split_parent(&path)
-                            .map(|(parent, _)| parent)
-                            .unwrap_or_default();
-                        self.children.remove(&parent);
-                        self.select(parent);
-                        self.children.remove(&self.selected);
-                        self.load_children(self.selected.clone());
-                        self.expand(self.selected.clone());
-                        self.set_ok(format!("Раздел удалён. Бэкап: {}", backup.display()));
+                self.pending_mutation = Some(PendingMutation::DeleteKey { path: path.clone() });
+                self.mutation_job = Some(Job::spawn(
+                    "chipclean-registry-mutation",
+                    move |_cancel, tx| {
+                        let result = registry_editor::delete_key(hive, &path, &backup_dir)
+                            .map_err(|err| err.to_string());
+                        let _ = tx.send(MutationEvent::Done(result));
+                    },
+                ));
+            }
+            EditorDialog::Import { .. } => self.submit_import(),
+        }
+    }
+
+    pub fn poll_mutation(&mut self) {
+        let (events, disconnected) = job::drain(&self.mutation_job);
+        let mut finished = false;
+        for event in events {
+            finished = true;
+            match event {
+                MutationEvent::Done(result) => {
+                    let pending = self.pending_mutation.take();
+                    match result {
+                        Ok(backup) => {
+                            self.dialog = None;
+                            self.apply_mutation_success(pending, &backup);
+                        }
+                        Err(err) => self.set_dialog_error(err),
                     }
-                    Err(err) => self.set_error(err.to_string()),
                 }
             }
-            EditorDialog::Import { preview, error } => {
-                self.dialog = Some(EditorDialog::Import { preview, error });
-                self.submit_import();
+        }
+
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.mutation_job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.pending_mutation = None;
+            self.set_dialog_error("Операция прервана: поток завершился неожиданно.".to_owned());
+        }
+    }
+
+    fn apply_mutation_success(
+        &mut self,
+        pending: Option<PendingMutation>,
+        backup: &std::path::Path,
+    ) {
+        match pending {
+            Some(PendingMutation::CreateKey { parent, name }) => {
+                let path = join_path(&parent, &name);
+                self.children.remove(&parent);
+                self.load_children(parent.clone());
+                self.expand(parent);
+                self.selected = path;
+                self.selected_value = None;
+                self.load_values();
+                self.set_ok(format!("Раздел создан. Бэкап: {}", backup.display()));
             }
+            Some(PendingMutation::Value { name }) => {
+                self.selected_value = Some(name);
+                self.load_values();
+                self.set_ok(format!("Сохранено. Бэкап: {}", backup.display()));
+            }
+            Some(PendingMutation::DeleteValue) => {
+                self.selected_value = None;
+                self.load_values();
+                self.set_ok(format!("Значение удалено. Бэкап: {}", backup.display()));
+            }
+            Some(PendingMutation::DeleteKey { path }) => {
+                let parent = split_parent(&path)
+                    .map(|(parent, _)| parent)
+                    .unwrap_or_default();
+                self.children.remove(&parent);
+                self.select(parent);
+                self.children.remove(&self.selected);
+                self.load_children(self.selected.clone());
+                self.expand(self.selected.clone());
+                self.set_ok(format!("Раздел удалён. Бэкап: {}", backup.display()));
+            }
+            None => {}
+        }
+    }
+
+    fn set_dialog_error(&mut self, err: String) {
+        let has_error_field = matches!(
+            self.dialog,
+            Some(EditorDialog::CreateKey { .. }) | Some(EditorDialog::Value { .. })
+        );
+        if has_error_field {
+            if let Some(EditorDialog::CreateKey { error, .. })
+            | Some(EditorDialog::Value { error, .. }) = &mut self.dialog
+            {
+                *error = Some(err);
+            }
+        } else {
+            self.dialog = None;
+            self.set_error(err);
         }
     }
 

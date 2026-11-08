@@ -1069,10 +1069,28 @@ fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
                     }
                 }
             }
+            if state.is_mutating() {
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(
+                        RichText::new("Применяю изменение реестра…")
+                            .font(font(9.5))
+                            .color(TEXT_MUTED),
+                    );
+                });
+            }
         });
 
-    if action == DialogAction::None && modal.should_close() && !state.is_importing() {
+    if action == DialogAction::None
+        && modal.should_close()
+        && !state.is_importing()
+        && !state.is_mutating()
+    {
         action = DialogAction::Cancel;
+    }
+    if action == DialogAction::Save && state.is_mutating() {
+        action = DialogAction::None;
     }
 
     match action {
