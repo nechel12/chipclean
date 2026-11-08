@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use windows::{
     Win32::{
-        Foundation::ERROR_MORE_DATA,
+        Foundation::{ERROR_MORE_DATA, ERROR_SERVICE_DOES_NOT_EXIST},
         System::Services::{
             ChangeServiceConfig2W, ChangeServiceConfigW, CloseServiceHandle,
             ENUM_SERVICE_STATUS_PROCESSW, ENUM_SERVICE_TYPE, EnumServicesStatusExW, OpenSCManagerW,
@@ -117,13 +117,21 @@ pub fn scan_services() -> Result<Vec<ServiceEntry>> {
         });
     }
 
-    for disabled in store.entries {
+    let mut cleaned_entries = Vec::new();
+    let mut phantom_removed = false;
+    for disabled in &store.entries {
         if seen_names
             .iter()
             .any(|name| name.eq_ignore_ascii_case(&disabled.name))
         {
+            cleaned_entries.push(disabled.clone());
             continue;
         }
+        if service_definitely_missing(&scm, &disabled.name) {
+            phantom_removed = true;
+            continue;
+        }
+        cleaned_entries.push(disabled.clone());
         entries.push(ServiceEntry {
             title: disabled.display_name.clone(),
             name: disabled.name.clone(),
@@ -135,6 +143,14 @@ pub fn scan_services() -> Result<Vec<ServiceEntry>> {
             system: is_system_path(&disabled.binary_path),
             managed: true,
         });
+    }
+    if phantom_removed {
+        let cleaned = DisabledServiceStore {
+            entries: cleaned_entries,
+        };
+        if let Err(err) = save_store(&DisabledServiceStore::path(), &cleaned) {
+            tracing::warn!(%err, "failed to remove phantom service entries");
+        }
     }
 
     entries.sort_by(|left, right| {
@@ -294,6 +310,19 @@ fn open_service(scm: &ScmHandle, name: &str, access: u32) -> Result<ServiceHandl
     let handle = unsafe { OpenServiceW(scm.0, PCWSTR(wide.as_ptr()), access) }
         .with_context(|| format!("не удалось открыть службу {name}"))?;
     Ok(ServiceHandle(handle))
+}
+
+fn service_definitely_missing(scm: &ScmHandle, name: &str) -> bool {
+    let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    match unsafe { OpenServiceW(scm.0, PCWSTR(wide.as_ptr()), SERVICE_QUERY_CONFIG) } {
+        Ok(handle) => {
+            let _ = unsafe { CloseServiceHandle(handle) };
+            false
+        }
+        // Only treat an explicit does-not-exist as a phantom; access errors keep
+        // the entry so a protected service is not dropped by mistake.
+        Err(err) => err.code() == ERROR_SERVICE_DOES_NOT_EXIST.to_hresult(),
+    }
 }
 
 fn enumerate_services(scm: &ScmHandle) -> Result<Vec<(String, String, u32)>> {

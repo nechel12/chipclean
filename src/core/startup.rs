@@ -25,6 +25,8 @@ use crate::{
 pub enum StartupSource {
     HkcuRun,
     HklmRun,
+    HkcuRunOnce,
+    HklmRunOnce,
     UserFolder,
     CommonFolder,
 }
@@ -34,6 +36,8 @@ impl StartupSource {
         match self {
             Self::HkcuRun => "HKCU Run",
             Self::HklmRun => "HKLM Run",
+            Self::HkcuRunOnce => "HKCU RunOnce",
+            Self::HklmRunOnce => "HKLM RunOnce",
             Self::UserFolder => "Папка пользователя",
             Self::CommonFolder => "Общая папка",
         }
@@ -41,11 +45,21 @@ impl StartupSource {
 
     pub fn short_label(self) -> &'static str {
         match self {
-            Self::HkcuRun => "HKCU",
-            Self::HklmRun => "HKLM",
+            Self::HkcuRun | Self::HkcuRunOnce => "HKCU",
+            Self::HklmRun | Self::HklmRunOnce => "HKLM",
             Self::UserFolder => "Пользователь",
             Self::CommonFolder => "Общая",
         }
+    }
+}
+
+fn startup_source(hive: RegistryHive, key_path: &str) -> StartupSource {
+    let run_once = key_path.to_ascii_lowercase().ends_with("runonce");
+    match (hive, run_once) {
+        (RegistryHive::CurrentUser, false) => StartupSource::HkcuRun,
+        (RegistryHive::CurrentUser, true) => StartupSource::HkcuRunOnce,
+        (RegistryHive::LocalMachine, false) => StartupSource::HklmRun,
+        (RegistryHive::LocalMachine, true) => StartupSource::HklmRunOnce,
     }
 }
 
@@ -130,11 +144,7 @@ fn scan_entries_with_store(store_path: &Path) -> Result<Vec<StartupEntry>> {
             entries.push(StartupEntry {
                 title: name.clone(),
                 command,
-                source: if *hive == RegistryHive::CurrentUser {
-                    StartupSource::HkcuRun
-                } else {
-                    StartupSource::HklmRun
-                },
+                source: startup_source(*hive, key_path),
                 enabled: true,
                 kind: StartupEntryKind::Registry {
                     hive: *hive,
@@ -307,11 +317,7 @@ fn disable_registry(
     key.remove_value(value_name)
         .map_err(|err| anyhow!("не удалось удалить значение автозагрузки: {err}"))?;
 
-    let source = if hive == RegistryHive::CurrentUser {
-        StartupSource::HkcuRun
-    } else {
-        StartupSource::HklmRun
-    };
+    let source = startup_source(hive, key_path);
     let mut store = load_store(store_path)?;
     store.entries.push(DisabledEntry {
         source,

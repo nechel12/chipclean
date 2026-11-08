@@ -725,7 +725,10 @@ fn entry_icon(entry: &StartupEntry) -> &'static str {
 
 fn source_color(source: StartupSource) -> Color32 {
     match source {
-        StartupSource::HkcuRun | StartupSource::HklmRun => ACCENT,
+        StartupSource::HkcuRun
+        | StartupSource::HklmRun
+        | StartupSource::HkcuRunOnce
+        | StartupSource::HklmRunOnce => ACCENT,
         StartupSource::UserFolder | StartupSource::CommonFolder => WARNING,
     }
 }

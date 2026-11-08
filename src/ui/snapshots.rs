@@ -518,8 +518,9 @@ fn diff_values_section(
 
 fn value_preview(value: &SnapshotValue) -> String {
     format!(
-        "{} · {}",
+        "{} · {} байт · {}",
         crate::core::registry_editor::type_label(value.ty),
+        value.size,
         value.preview
     )
 }
