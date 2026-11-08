@@ -162,9 +162,12 @@ fn program_data_dir() -> PathBuf {
 }
 
 fn system_drive() -> PathBuf {
-    std::env::var_os("SystemDrive")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("C:"))
+    let drive = std::env::var_os("SystemDrive")
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "C:".to_owned());
+    let mut root = drive.trim_end_matches('\\').to_owned();
+    root.push('\\');
+    PathBuf::from(root)
 }
 
 fn join_sub(mut root: PathBuf, sub: &str) -> PathBuf {
@@ -191,5 +194,20 @@ fn expand_path(path: PathBuf) -> Vec<PathBuf> {
         vec![path]
     } else {
         Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_drive_is_rooted() {
+        let drive = system_drive();
+        let text = drive.to_string_lossy();
+        assert!(text.ends_with('\\'), "drive must be rooted: {text}");
+        assert!(drive.has_root());
+        let joined = join_sub(drive, "Windows.old");
+        assert!(joined.to_string_lossy().contains(":\\Windows.old"));
     }
 }

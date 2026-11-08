@@ -112,7 +112,8 @@ fn collect_folder(folder: &ITaskFolder, entries: &mut Vec<TaskEntry>, depth: u32
 
     if let Ok(tasks) = unsafe { folder.GetTasks(TASK_ENUM_HIDDEN.0) } {
         let count = unsafe { tasks.Count() }.unwrap_or(0);
-        for index in 0..count {
+        // Task Scheduler collections are 1-based; index 0 is invalid.
+        for index in 1..=count {
             let Ok(task) = (unsafe { tasks.get_Item(&index_variant(index)) }) else {
                 continue;
             };
@@ -146,7 +147,7 @@ fn collect_folder(folder: &ITaskFolder, entries: &mut Vec<TaskEntry>, depth: u32
 
     if let Ok(folders) = unsafe { folder.GetFolders(0) } {
         let count = unsafe { folders.Count() }.unwrap_or(0);
-        for index in 0..count {
+        for index in 1..=count {
             let Ok(child) = (unsafe { folders.get_Item(&index_variant(index)) }) else {
                 continue;
             };

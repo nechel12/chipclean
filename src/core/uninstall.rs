@@ -120,7 +120,8 @@ pub fn scan_programs() -> Result<Vec<ProgramEntry>> {
             let install_location = subkey
                 .get_string("InstallLocation")
                 .ok()
-                .map(|path| path.trim().to_owned())
+                .map(|path| crate::core::safety::expand_env(path.trim()))
+                .map(|path| path.trim().trim_matches('"').trim().to_owned())
                 .filter(|path| !path.is_empty())
                 .map(PathBuf::from);
 

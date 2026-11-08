@@ -585,16 +585,28 @@ fn installed_references(programs: &[ProgramEntry]) -> Vec<PathBuf> {
 
     for program in programs {
         if let Some(location) = &program.install_location {
-            references.insert(normalize_path(location));
+            let normalized = normalize_path(location);
+            if is_absolute_reference(&normalized) {
+                references.insert(normalized);
+            }
         }
         if let Some(ProgramCommand::Command { executable, .. }) = &program.command
             && let Some(parent) = Path::new(executable).parent()
         {
-            references.insert(normalize_path(parent));
+            let normalized = normalize_path(parent);
+            if is_absolute_reference(&normalized) {
+                references.insert(normalized);
+            }
         }
     }
 
     references.into_iter().collect()
+}
+
+fn is_absolute_reference(path: &Path) -> bool {
+    // Empty, relative and bare drive-root references would match every path
+    // through starts_with and silently disable orphan detection.
+    path.has_root() && path.components().count() >= 3
 }
 
 fn is_referenced(path: &Path, references: &[PathBuf]) -> bool {
@@ -1257,5 +1269,14 @@ mod tests {
             Path::new(r"C:\Program Files\Vendor\Other"),
             &references
         ));
+    }
+
+    #[test]
+    fn rejects_empty_relative_and_root_references() {
+        assert!(!is_absolute_reference(Path::new("")));
+        assert!(!is_absolute_reference(Path::new("RUNDLL32.EXE")));
+        assert!(!is_absolute_reference(Path::new(r"C:\")));
+        assert!(!is_absolute_reference(Path::new(r"C:")));
+        assert!(is_absolute_reference(Path::new(r"C:\Program Files\App")));
     }
 }
