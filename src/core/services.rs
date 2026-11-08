@@ -183,15 +183,13 @@ fn disable_service(entry: &ServiceEntry) -> Result<String> {
         disabled_at: Utc::now().to_rfc3339(),
     };
     store.entries.push(disabled.clone());
-    change_start_type(service.0, SERVICE_DISABLED, false)?;
-
-    if let Err(err) = save_store(&store_path, &store) {
-        let _ = change_start_type(
-            service.0,
-            SERVICE_START_TYPE(config.start_type),
-            config.delayed,
-        );
-        return Err(err.context("не удалось сохранить состояние; тип запуска восстановлен"));
+    save_store(&store_path, &store).context("не удалось сохранить состояние службы")?;
+    if let Err(err) = change_start_type(service.0, SERVICE_DISABLED, false) {
+        store
+            .entries
+            .retain(|disabled| !disabled.name.eq_ignore_ascii_case(&entry.name));
+        let _ = save_store(&store_path, &store);
+        return Err(err.context("не удалось отключить службу"));
     }
 
     journal(json!({
@@ -228,6 +226,10 @@ fn enable_service(entry: &ServiceEntry) -> Result<String> {
         &original.name,
         SERVICE_QUERY_CONFIG | SERVICE_CHANGE_CONFIG,
     )?;
+    let current = query_config(service.0)?;
+    if current.start_type != SERVICE_DISABLED.0 {
+        bail!("Тип запуска службы изменился извне; обновите список.");
+    }
     change_start_type(
         service.0,
         SERVICE_START_TYPE(original.original_start_type),
