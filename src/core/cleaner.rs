@@ -210,7 +210,22 @@ fn clean_category(
             return outcome;
         }
 
-        let before = crate::win::recycle_bin::query().unwrap_or_default();
+        let before = match crate::win::recycle_bin::query() {
+            Ok(info) => info,
+            Err(err) => {
+                outcome.errors = outcome.errors.saturating_add(1);
+                if let Err(journal_err) = journal.failure(
+                    category.id,
+                    Path::new("<recycle-bin>"),
+                    &format!("не удалось измерить корзину: {err}"),
+                ) {
+                    *fatal = Some(format!("Журнал операций недоступен: {journal_err}"));
+                    cancel.store(true, Ordering::Relaxed);
+                    return outcome;
+                }
+                crate::win::recycle_bin::RecycleBinInfo::default()
+            }
+        };
         match crate::win::recycle_bin::empty() {
             Ok(()) => {
                 outcome.bytes = outcome.bytes.saturating_add(before.bytes);

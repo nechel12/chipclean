@@ -33,13 +33,19 @@ pub fn purge() -> Result<PurgeOutcome> {
     let dirs = quarantine_dirs();
     let mut outcome = purge_dirs(&dirs);
 
-    if let Err(err) = startup::purge_folder_quarantine_metadata() {
-        tracing::warn!(%err, "failed to purge startup quarantine metadata");
-        outcome.errors += 1;
-    }
-    if let Err(err) = traces::clear_quarantine_metadata() {
-        tracing::warn!(%err, "failed to purge trace quarantine metadata");
-        outcome.errors += 1;
+    if outcome.errors == 0 {
+        if let Err(err) = startup::purge_folder_quarantine_metadata() {
+            tracing::warn!(%err, "failed to purge startup quarantine metadata");
+            outcome.errors += 1;
+        }
+        if let Err(err) = traces::clear_quarantine_metadata() {
+            tracing::warn!(%err, "failed to purge trace quarantine metadata");
+            outcome.errors += 1;
+        }
+    } else {
+        tracing::warn!(
+            "quarantine purge had deletion errors; metadata preserved so survivors stay restorable"
+        );
     }
 
     journal(json!({
