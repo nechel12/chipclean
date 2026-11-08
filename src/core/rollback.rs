@@ -22,8 +22,8 @@ use crate::{
 };
 
 const BACKUP_LIMIT: usize = 500;
-const BACKUP_PARSE_BYTES: u64 = 4 * 1024 * 1024;
-const TARGET_LIMIT: usize = 48;
+const MAX_BACKUP_BYTES: u64 = 128 * 1024 * 1024;
+const TARGET_LIMIT: usize = 100_000;
 const JOURNAL_LIMIT: usize = 60;
 const WALK_DEPTH: usize = 4;
 
@@ -192,12 +192,17 @@ fn parse_targets(path: &Path) -> Result<(Vec<BackupTarget>, bool)> {
         File::open(path).with_context(|| format!("не удалось открыть {}", path.display()))?;
     let mut bytes = Vec::new();
     file.by_ref()
-        .take(BACKUP_PARSE_BYTES)
+        .take(MAX_BACKUP_BYTES + 1)
         .read_to_end(&mut bytes)
         .with_context(|| format!("не удалось прочитать {}", path.display()))?;
+    let byte_truncated = bytes.len() as u64 > MAX_BACKUP_BYTES;
+    if byte_truncated {
+        bytes.truncate(MAX_BACKUP_BYTES as usize);
+    }
 
     let text = reg_file::decode_text(&bytes);
-    Ok(parse_targets_from_text(&text))
+    let (targets, target_truncated) = parse_targets_from_text(&text);
+    Ok((targets, byte_truncated || target_truncated))
 }
 
 fn parse_targets_from_text(text: &str) -> (Vec<BackupTarget>, bool) {
@@ -236,6 +241,30 @@ fn parse_targets_from_text(text: &str) -> (Vec<BackupTarget>, bool) {
     (targets, truncated)
 }
 
+fn covering_targets(targets: &[BackupTarget]) -> Vec<BackupTarget> {
+    let mut sorted = targets.to_vec();
+    sorted.sort_by(|left, right| {
+        left.hive
+            .short()
+            .cmp(right.hive.short())
+            .then_with(|| left.path.to_lowercase().cmp(&right.path.to_lowercase()))
+    });
+    let mut roots: Vec<BackupTarget> = Vec::new();
+    for target in sorted {
+        let path = target.path.to_lowercase();
+        let covered = roots.iter().any(|root| {
+            root.hive == target.hive && {
+                let root_path = root.path.to_lowercase();
+                path == root_path || path.starts_with(&format!("{root_path}\\"))
+            }
+        });
+        if !covered {
+            roots.push(target);
+        }
+    }
+    roots
+}
+
 pub fn restore_registry(backup: &RegistryBackup) -> Result<RestoreReport> {
     restore_registry_at(backup, &config::backups_dir())
 }
@@ -244,23 +273,20 @@ fn restore_registry_at(backup: &RegistryBackup, backups_root: &Path) -> Result<R
     if backup.targets.is_empty() {
         bail!("В файле .reg не удалось определить разделы; восстановление отменено");
     }
+    if backup.truncated {
+        bail!(
+            "Файл бэкапа распознан не полностью; восстановление отменено, \
+             чтобы не перезаписать разделы без страховых копий"
+        );
+    }
     ensure_inside(backup.path.as_path(), backups_root)?;
 
     let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
     let safety_dir = backups_root.join(format!("pre-restore-{stamp}"));
     let mut report = RestoreReport::default();
-    let mut exported = BTreeSet::new();
 
-    for target in &backup.targets {
+    for target in covering_targets(&backup.targets) {
         if registry_editor::open_key(target.hive, &target.path).is_err() {
-            continue;
-        }
-        let identity = format!(
-            "{}\\{}",
-            target.hive.short(),
-            target.path.to_ascii_lowercase()
-        );
-        if !exported.insert(identity) {
             continue;
         }
         let path = registry_editor::backup_key_to(target.hive, &target.path, &safety_dir)?;
@@ -532,5 +558,68 @@ mod tests {
         assert_eq!(key.get_string("Value").unwrap(), "before");
         drop(key);
         let _ = CURRENT_USER.remove_tree(&path);
+    }
+
+    #[test]
+    fn covering_targets_keeps_only_top_most_roots() {
+        let targets = vec![
+            BackupTarget {
+                hive: EditorHive::Hkcu,
+                path: r"Software\A\B\C".to_owned(),
+            },
+            BackupTarget {
+                hive: EditorHive::Hkcu,
+                path: r"Software\A".to_owned(),
+            },
+            BackupTarget {
+                hive: EditorHive::Hkcu,
+                path: r"Software\A\B".to_owned(),
+            },
+            BackupTarget {
+                hive: EditorHive::Hkcu,
+                path: r"Software\X".to_owned(),
+            },
+            BackupTarget {
+                hive: EditorHive::Hklm,
+                path: r"SOFTWARE\A".to_owned(),
+            },
+        ];
+        let roots = covering_targets(&targets);
+        let labels: Vec<String> = roots
+            .iter()
+            .map(|target| format!("{}\\{}", target.hive.short(), target.path))
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                r"HKCU\Software\A".to_owned(),
+                r"HKCU\Software\X".to_owned(),
+                r"HKLM\SOFTWARE\A".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn restore_refuses_a_truncated_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let backup_path = dir.path().join("big.reg");
+        fs::write(
+            &backup_path,
+            "Windows Registry Editor Version 5.00\n[HKEY_CURRENT_USER\\Software\\X]\n",
+        )
+        .unwrap();
+        let backup = RegistryBackup {
+            path: backup_path,
+            label: "big".to_owned(),
+            group: "test".to_owned(),
+            created_at: None,
+            size: 0,
+            targets: vec![BackupTarget {
+                hive: EditorHive::Hkcu,
+                path: r"Software\X".to_owned(),
+            }],
+            truncated: true,
+        };
+        assert!(restore_registry_at(&backup, dir.path()).is_err());
     }
 }
