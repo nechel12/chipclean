@@ -424,9 +424,18 @@ fn registry_row(ui: &mut Ui, backup: &RegistryBackup, index: usize) -> RowAction
                     );
                     if backup.truncated {
                         ui.label(
-                            RichText::new("Список разделов сокращён")
+                            RichText::new(
+                                "Предпросмотр сокращён; восстановление прочитает весь файл",
+                            )
+                            .font(font(8.5))
+                            .color(WARNING),
+                        );
+                    }
+                    if backup.deletes > 0 {
+                        ui.label(
+                            RichText::new(format!("Удаляет разделов: {}", backup.deletes))
                                 .font(font(8.5))
-                                .color(WARNING),
+                                .color(ACCENT),
                         );
                     }
                 });
@@ -792,12 +801,30 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut RollbackState) {
                     });
             });
 
-        if matches!(request, RestoreRequest::Registry(_)) {
+        if let RestoreRequest::Registry(backup) = &request {
             ui.add_space(10.0);
             warning_box(
                 ui,
                 WARNING,
                 "Импорт .reg перезапишет существующие значения и создаст отсутствующие разделы. Перед импортом ChipClean автоматически сохранит страховые копии затронутых разделов в каталог бэкапов.",
+            );
+            if backup.deletes > 0 {
+                ui.add_space(8.0);
+                warning_box(
+                    ui,
+                    ACCENT,
+                    &format!(
+                        "Файл также удаляет разделы: {}. При импорте они будут удалены.",
+                        backup.deletes
+                    ),
+                );
+            }
+            ui.add_space(8.0);
+            widgets::inline_hint(
+                ui,
+                ph::WARNING,
+                "Восстановление применяется к текущему профилю и системе; бэкап с другого компьютера или пользователя может затронуть не те ветки.",
+                TEXT_DIM,
             );
             ui.add_space(8.0);
             widgets::confirmation_checkbox(
