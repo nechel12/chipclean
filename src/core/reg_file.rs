@@ -24,8 +24,38 @@ pub(crate) fn decode_text(bytes: &[u8]) -> String {
     } else if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         String::from_utf8_lossy(&bytes[3..]).into_owned()
     } else {
-        String::from_utf8_lossy(bytes).into_owned()
+        decode_ansi(bytes)
     }
+}
+
+#[cfg(windows)]
+fn decode_ansi(bytes: &[u8]) -> String {
+    use windows::Win32::Globalization::{
+        CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar,
+    };
+
+    if bytes.is_empty() {
+        return String::new();
+    }
+    // reg.exe reads BOM-less .reg files in the system ANSI code page, so the
+    // preview must use the same interpretation rather than assuming UTF-8.
+    let flags = MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0);
+    let len = unsafe { MultiByteToWideChar(CP_ACP, flags, bytes, None) };
+    if len <= 0 {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    let mut wide = vec![0u16; len as usize];
+    let written = unsafe { MultiByteToWideChar(CP_ACP, flags, bytes, Some(&mut wide)) };
+    if written <= 0 {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    wide.truncate(written as usize);
+    String::from_utf16_lossy(&wide)
+}
+
+#[cfg(not(windows))]
+fn decode_ansi(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 pub(crate) fn parse_hive(value: &str) -> Option<EditorHive> {
@@ -90,5 +120,15 @@ mod tests {
     #[test]
     fn unescapes_value_names() {
         assert_eq!(unescape_name(r#"a\\b\"c"#), r#"a\b"c"#);
+    }
+
+    #[test]
+    fn decodes_bomless_bytes_via_ansi_not_lossy_utf8() {
+        // 0xC0 0xC1 is not a valid UTF-8 sequence but is valid single-byte ANSI;
+        // lossy UTF-8 would emit replacement characters instead.
+        let decoded = decode_text(&[0xC0, 0xC1]);
+        assert_eq!(decoded.chars().count(), 2);
+        assert!(!decoded.contains('\u{FFFD}'));
+        assert_eq!(decode_text(b"plain ascii"), "plain ascii");
     }
 }

@@ -87,6 +87,7 @@ pub struct EditorState {
     replace_with_used: Option<String>,
     replace_scope_used: Option<(EditorHive, String)>,
     replace_applying: bool,
+    pub import_ack: bool,
     pub dialog: Option<EditorDialog>,
     pub message: Option<Message>,
     loaded: bool,
@@ -117,6 +118,7 @@ impl EditorState {
             replace_with_used: None,
             replace_scope_used: None,
             replace_applying: false,
+            import_ack: false,
             dialog: None,
             message: None,
             loaded: false,
@@ -552,6 +554,7 @@ impl EditorState {
             return;
         };
         self.abort_import();
+        self.import_ack = false;
         self.dialog = Some(EditorDialog::Import {
             preview: None,
             error: None,
@@ -571,12 +574,22 @@ impl EditorState {
         }
         let Some(EditorDialog::Import {
             preview: Some(preview),
-            error: None,
+            ..
         }) = &self.dialog
         else {
             return;
         };
         let preview = preview.clone();
+        if preview.delete_count() > 0 && !self.import_ack {
+            if let Some(EditorDialog::Import { error, .. }) = &mut self.dialog {
+                *error =
+                    Some("Отметьте подтверждение удаления разделов перед импортом.".to_owned());
+            }
+            return;
+        }
+        if let Some(EditorDialog::Import { error, .. }) = &mut self.dialog {
+            *error = None;
+        }
         self.import_job = Some(Job::spawn(
             "chipclean-registry-import",
             move |_cancel, tx| {
@@ -594,6 +607,7 @@ impl EditorState {
             match event {
                 ImportEvent::Previewed(result) => match result {
                     Ok(preview) => {
+                        self.import_ack = false;
                         self.dialog = Some(EditorDialog::Import {
                             preview: Some(preview),
                             error: None,
@@ -949,5 +963,38 @@ mod tests {
         state.select(r"Software\ChipCleanReplaceStateOther".to_owned());
         assert!(state.replace_hits.is_none());
         assert!(!state.replace_params_changed());
+    }
+
+    #[test]
+    fn import_requires_ack_for_deletions() {
+        use crate::core::registry_import::ImportKey;
+
+        let mut state = EditorState::new();
+        let preview = ImportPreview {
+            path: std::path::PathBuf::from("noop.reg"),
+            file_name: "noop.reg".to_owned(),
+            size: 0,
+            encoding: "UTF-8",
+            keys: vec![ImportKey {
+                hive: EditorHive::Hkcu,
+                path: r"Software\ChipCleanImportAck".to_owned(),
+                delete: true,
+                values: Vec::new(),
+            }],
+            value_count: 0,
+            skipped_keys: 0,
+            preview_truncated: false,
+        };
+        state.dialog = Some(EditorDialog::Import {
+            preview: Some(preview),
+            error: None,
+        });
+        state.import_ack = false;
+        state.submit_import();
+        assert!(state.import_job.is_none());
+        assert!(matches!(
+            &state.dialog,
+            Some(EditorDialog::Import { error: Some(_), .. })
+        ));
     }
 }

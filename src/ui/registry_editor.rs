@@ -932,12 +932,17 @@ fn dialog_window(ctx: &egui::Context, state: &mut EditorState) {
                                 ),
                                 WARNING,
                             );
+                            ui.add_space(6.0);
+                            ui.add(egui::Checkbox::new(
+                                &mut state.import_ack,
+                                "Подтверждаю удаление этих разделов при импорте.",
+                            ));
                         }
                         if preview.skipped_keys > 0 {
                             ui.add_space(4.0);
                             ui.label(
                                 RichText::new(format!(
-                                    "Пропущено разделов неподдерживаемых веток: {}.",
+                                    "Не распознано разделов: {} (reg.exe применит файл целиком).",
                                     preview.skipped_keys
                                 ))
                                 .font(font(9.0))
