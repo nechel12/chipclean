@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crossbeam_channel::Sender;
@@ -53,6 +53,7 @@ pub enum CleanEvent {
 pub fn spawn(
     categories: Vec<CleanupCategory>,
     downloads_days: u32,
+    not_modified_after: Option<SystemTime>,
     cancel: Arc<AtomicBool>,
     tx: Sender<CleanEvent>,
 ) -> JoinHandle<()> {
@@ -103,6 +104,7 @@ pub fn spawn(
                 let category_outcome = clean_category(
                     category,
                     downloads_days,
+                    not_modified_after,
                     &cancel,
                     &mut journal,
                     &tx,
@@ -171,6 +173,7 @@ pub fn spawn(
 fn clean_category(
     category: &CleanupCategory,
     downloads_days: u32,
+    not_modified_after: Option<SystemTime>,
     cancel: &AtomicBool,
     journal: &mut Journal,
     tx: &Sender<CleanEvent>,
@@ -250,43 +253,49 @@ fn clean_category(
         }
     }
 
-    let stats = walk_category_files(category, downloads_days, cancel, |path, metadata| {
-        if fatal.is_some() {
-            return;
-        }
+    let stats = walk_category_files(
+        category,
+        downloads_days,
+        cancel,
+        not_modified_after,
+        |path, metadata| {
+            if fatal.is_some() {
+                return;
+            }
 
-        match safe_delete_file(path) {
-            Ok(()) => {
-                outcome.bytes = outcome.bytes.saturating_add(metadata.len());
-                outcome.files = outcome.files.saturating_add(1);
+            match safe_delete_file(path) {
+                Ok(()) => {
+                    outcome.bytes = outcome.bytes.saturating_add(metadata.len());
+                    outcome.files = outcome.files.saturating_add(1);
 
-                if let Err(err) = journal.delete(category.id, path, metadata.len()) {
-                    *fatal = Some(format!("Журнал операций недоступен: {err}"));
-                    cancel.store(true, Ordering::Relaxed);
+                    if let Err(err) = journal.delete(category.id, path, metadata.len()) {
+                        *fatal = Some(format!("Журнал операций недоступен: {err}"));
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                }
+                Err(err) => {
+                    outcome.errors = outcome.errors.saturating_add(1);
+
+                    if let Err(journal_err) = journal.failure(category.id, path, &err.to_string()) {
+                        *fatal = Some(format!("Журнал операций недоступен: {journal_err}"));
+                        cancel.store(true, Ordering::Relaxed);
+                    }
                 }
             }
-            Err(err) => {
-                outcome.errors = outcome.errors.saturating_add(1);
 
-                if let Err(journal_err) = journal.failure(category.id, path, &err.to_string()) {
-                    *fatal = Some(format!("Журнал операций недоступен: {journal_err}"));
-                    cancel.store(true, Ordering::Relaxed);
-                }
+            if last_emit.elapsed() >= Duration::from_millis(120) {
+                let _ = tx.send(CleanEvent::Progress {
+                    bytes: base.bytes.saturating_add(outcome.bytes),
+                    files: base.files.saturating_add(outcome.files),
+                    errors: base.errors.saturating_add(outcome.errors),
+                    done_categories,
+                    total_categories,
+                    current: Some(category.id),
+                });
+                *last_emit = Instant::now();
             }
-        }
-
-        if last_emit.elapsed() >= Duration::from_millis(120) {
-            let _ = tx.send(CleanEvent::Progress {
-                bytes: base.bytes.saturating_add(outcome.bytes),
-                files: base.files.saturating_add(outcome.files),
-                errors: base.errors.saturating_add(outcome.errors),
-                done_categories,
-                total_categories,
-                current: Some(category.id),
-            });
-            *last_emit = Instant::now();
-        }
-    });
+        },
+    );
 
     outcome.errors = outcome.errors.saturating_add(stats.errors);
     outcome
@@ -367,6 +376,7 @@ mod tests {
         let outcome = clean_category(
             &category,
             7,
+            None,
             &cancel,
             &mut journal,
             &tx,
@@ -387,6 +397,52 @@ mod tests {
 
         let journal = std::fs::read_to_string(journal_path).unwrap();
         assert_eq!(journal.lines().count(), 2);
+    }
+
+    #[test]
+    fn skips_files_modified_after_scan_cutoff() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let file = root.join("fresh.tmp");
+        std::fs::write(&file, b"1234").unwrap();
+
+        let category = CleanupCategory {
+            id: CategoryId::TempUser,
+            title: "test",
+            summary: "test",
+            icon: "",
+            group: Group::System,
+            risk: Risk::Safe,
+            requires_admin: false,
+            extra_confirmation: false,
+            default_enabled: true,
+            max_only: false,
+            targets: vec![ScanTarget::path(PathSource::Literal(root.clone()))],
+        };
+        let cancel = AtomicBool::new(false);
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let journal_dir = tempfile::tempdir().unwrap();
+        let mut journal = Journal::open_at(journal_dir.path().join("journal.jsonl")).unwrap();
+        let mut last_emit = Instant::now();
+        let mut fatal = None;
+        let cutoff = SystemTime::now() - Duration::from_secs(3600);
+
+        let outcome = clean_category(
+            &category,
+            7,
+            Some(cutoff),
+            &cancel,
+            &mut journal,
+            &tx,
+            1,
+            0,
+            CleanOutcome::default(),
+            &mut last_emit,
+            &mut fatal,
+        );
+
+        assert_eq!(outcome.files, 0);
+        assert!(file.exists());
     }
 
     #[test]
@@ -428,6 +484,7 @@ mod tests {
         let outcome = clean_category(
             &category,
             7,
+            None,
             &cancel,
             &mut journal,
             &tx,

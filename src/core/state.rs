@@ -5,7 +5,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::JoinHandle,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use crossbeam_channel::{Receiver, TryRecvError, unbounded};
@@ -81,6 +81,7 @@ pub struct CleanupState {
     pub sensitive_ack: bool,
     pub advanced_ack: bool,
     selection_before_max: Option<BTreeSet<CategoryId>>,
+    scan_cutoff: Option<SystemTime>,
     cancel: Arc<AtomicBool>,
     rx: Option<Receiver<ScanEvent>>,
     handle: Option<JoinHandle<()>>,
@@ -120,6 +121,7 @@ impl CleanupState {
             sensitive_ack: false,
             advanced_ack: false,
             selection_before_max,
+            scan_cutoff: None,
             cancel: Arc::new(AtomicBool::new(false)),
             rx: None,
             handle: None,
@@ -164,6 +166,7 @@ impl CleanupState {
         }
 
         self.results.clear();
+        self.scan_cutoff = Some(SystemTime::now());
         self.clean = CleanState::Idle;
         self.pending_cleanup = None;
         self.sensitive_ack = false;
@@ -379,6 +382,7 @@ impl CleanupState {
         self.clean_handle = Some(cleaner::spawn(
             categories,
             downloads_days,
+            self.scan_cutoff,
             Arc::clone(&self.clean_cancel),
             tx,
         ));

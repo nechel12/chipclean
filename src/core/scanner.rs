@@ -137,7 +137,7 @@ fn scan_category(
         }
     }
 
-    let stats = walk_category_files(category, downloads_days, cancel, |_, metadata| {
+    let stats = walk_category_files(category, downloads_days, cancel, None, |_, metadata| {
         outcome.bytes = outcome.bytes.saturating_add(metadata.len());
         outcome.files = outcome.files.saturating_add(1);
     });
@@ -150,6 +150,7 @@ pub(crate) fn walk_category_files(
     category: &CleanupCategory,
     downloads_days: u32,
     cancel: &AtomicBool,
+    not_modified_after: Option<SystemTime>,
     mut visit: impl FnMut(&Path, &std::fs::Metadata),
 ) -> WalkStats {
     let mut stats = WalkStats {
@@ -214,6 +215,15 @@ pub(crate) fn walk_category_files(
                 };
 
                 if days > 0 && !is_older_than(metadata.modified().ok(), days) {
+                    continue;
+                }
+
+                if let Some(cutoff) = not_modified_after
+                    && metadata
+                        .modified()
+                        .map(|modified| modified > cutoff)
+                        .unwrap_or(true)
+                {
                     continue;
                 }
 
