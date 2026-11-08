@@ -16,6 +16,11 @@ use super::{
 
 const MAX_JOURNAL_BYTES: u64 = 10 * 1024 * 1024;
 
+// Serializes open+rotate across worker threads so two concurrent rotations
+// cannot destroy the freshly rotated archive. Single-instance rules out a
+// second process, so a process-wide lock is sufficient.
+static JOURNAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub struct Journal {
     writer: BufWriter<File>,
     path: PathBuf,
@@ -31,6 +36,7 @@ impl Journal {
     }
 
     fn open_at_with_limit(path: PathBuf, max_bytes: u64) -> Result<Self> {
+        let _guard = JOURNAL_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("не удалось создать {}", parent.display()))?;

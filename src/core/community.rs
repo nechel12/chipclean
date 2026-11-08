@@ -130,7 +130,18 @@ fn parse_sections(text: &str) -> Vec<Section> {
 }
 
 fn detected(section: &Section) -> bool {
-    let detects = section.starts_with("detect");
+    // DetectOS is an OS-version constraint, not a path; it is not evaluated
+    // here, but it must not be treated as a file path (which never matches and
+    // would hide sections that only declare DetectOS).
+    let detects: Vec<&str> = section
+        .values
+        .iter()
+        .filter(|(key, _)| {
+            let key = key.to_ascii_lowercase();
+            key.starts_with("detect") && !key.starts_with("detectos")
+        })
+        .map(|(_, value)| value.as_str())
+        .collect();
     if detects.is_empty() {
         return true;
     }
@@ -388,5 +399,12 @@ ExcludeKey3=%TEMP%\file.txt
                 r"%TEMP%\App\sub".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn detectos_does_not_hide_sections() {
+        let text = "[OS Only]\nDetectOS=6.1\nFileKey1=%TEMP%\\x|*.*\n";
+        let sections = parse_sections(text);
+        assert!(detected(&sections[0]));
     }
 }
