@@ -190,10 +190,20 @@ pub fn personal_targets() -> Vec<DataTarget> {
             "Система и Проводник",
             false,
             Some("Уведомления могут пропасть до следующего входа в систему."),
-            vec![file(
-                r"%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db",
-                false,
-            )],
+            vec![
+                file(
+                    r"%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db",
+                    false,
+                ),
+                file(
+                    r"%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db-wal",
+                    false,
+                ),
+                file(
+                    r"%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db-shm",
+                    false,
+                ),
+            ],
             vec![],
         ),
         target(
@@ -209,6 +219,14 @@ pub fn personal_targets() -> Vec<DataTarget> {
                     r"%LOCALAPPDATA%\Microsoft\Edge\User Data\*\History-journal",
                     false,
                 ),
+                file(
+                    r"%LOCALAPPDATA%\Microsoft\Edge\User Data\*\History-wal",
+                    false,
+                ),
+                file(
+                    r"%LOCALAPPDATA%\Microsoft\Edge\User Data\*\History-shm",
+                    false,
+                ),
             ],
             vec![],
         ),
@@ -219,10 +237,20 @@ pub fn personal_targets() -> Vec<DataTarget> {
             "Браузеры",
             false,
             Some("Все сайты потребуют повторного входа."),
-            vec![file(
-                r"%LOCALAPPDATA%\Microsoft\Edge\User Data\*\Network\Cookies",
-                false,
-            )],
+            vec![
+                file(
+                    r"%LOCALAPPDATA%\Microsoft\Edge\User Data\*\Network\Cookies",
+                    false,
+                ),
+                file(
+                    r"%LOCALAPPDATA%\Microsoft\Edge\User Data\*\Network\Cookies-wal",
+                    false,
+                ),
+                file(
+                    r"%LOCALAPPDATA%\Microsoft\Edge\User Data\*\Network\Cookies-shm",
+                    false,
+                ),
+            ],
             vec![],
         ),
         target(
@@ -238,6 +266,14 @@ pub fn personal_targets() -> Vec<DataTarget> {
                     r"%LOCALAPPDATA%\Google\Chrome\User Data\*\History-journal",
                     false,
                 ),
+                file(
+                    r"%LOCALAPPDATA%\Google\Chrome\User Data\*\History-wal",
+                    false,
+                ),
+                file(
+                    r"%LOCALAPPDATA%\Google\Chrome\User Data\*\History-shm",
+                    false,
+                ),
             ],
             vec![],
         ),
@@ -248,10 +284,20 @@ pub fn personal_targets() -> Vec<DataTarget> {
             "Браузеры",
             false,
             Some("Все сайты потребуют повторного входа."),
-            vec![file(
-                r"%LOCALAPPDATA%\Google\Chrome\User Data\*\Network\Cookies",
-                false,
-            )],
+            vec![
+                file(
+                    r"%LOCALAPPDATA%\Google\Chrome\User Data\*\Network\Cookies",
+                    false,
+                ),
+                file(
+                    r"%LOCALAPPDATA%\Google\Chrome\User Data\*\Network\Cookies-wal",
+                    false,
+                ),
+                file(
+                    r"%LOCALAPPDATA%\Google\Chrome\User Data\*\Network\Cookies-shm",
+                    false,
+                ),
+            ],
             vec![],
         ),
         history_target(
@@ -272,10 +318,20 @@ pub fn personal_targets() -> Vec<DataTarget> {
             "Браузеры",
             false,
             Some("Все сайты потребуют повторного входа."),
-            vec![file(
-                r"%APPDATA%\Mozilla\Firefox\Profiles\*\cookies.sqlite",
-                false,
-            )],
+            vec![
+                file(
+                    r"%APPDATA%\Mozilla\Firefox\Profiles\*\cookies.sqlite",
+                    false,
+                ),
+                file(
+                    r"%APPDATA%\Mozilla\Firefox\Profiles\*\cookies.sqlite-wal",
+                    false,
+                ),
+                file(
+                    r"%APPDATA%\Mozilla\Firefox\Profiles\*\cookies.sqlite-shm",
+                    false,
+                ),
+            ],
             vec![],
         ),
     ]
