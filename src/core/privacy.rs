@@ -450,9 +450,9 @@ fn collect_files(target: &DataTarget, spec: &FileSpec) -> Result<Vec<(PathBuf, u
             continue;
         }
         let walker = if spec.recurse {
-            WalkDir::new(&root)
+            WalkDir::new(&root).follow_root_links(false)
         } else {
-            WalkDir::new(&root).max_depth(1)
+            WalkDir::new(&root).max_depth(1).follow_root_links(false)
         };
         for entry in walker.into_iter().filter_map(|entry| entry.ok()) {
             let path = entry.path();

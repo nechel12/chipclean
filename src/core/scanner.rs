@@ -179,7 +179,9 @@ pub(crate) fn walk_category_files(
         };
 
         for root in source.resolve() {
-            let mut walker = WalkDir::new(&root).follow_links(false);
+            let mut walker = WalkDir::new(&root)
+                .follow_links(false)
+                .follow_root_links(false);
             if *max_depth > 0 {
                 walker = walker.max_depth(*max_depth);
             }

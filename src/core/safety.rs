@@ -13,7 +13,7 @@ pub enum Risk {
 
 pub fn classify_file(path: &Path) -> Risk {
     let risk = classify_file_str(&path.to_string_lossy());
-    if risk != Risk::Outside {
+    if risk == Risk::Blocked {
         return risk;
     }
     match fs::canonicalize(path) {
@@ -102,8 +102,29 @@ pub fn classify_registry(hive: EditorHive, path: &str, remove_self: bool) -> Ris
     if !safe {
         return Risk::Outside;
     }
-    if remove_self && matches!(lower.as_str(), "software" | "software\\microsoft") {
-        return Risk::Blocked;
+    if remove_self {
+        const EXACT: &[&str] = &[
+            "software",
+            "software\\microsoft",
+            "software\\classes",
+            "software\\microsoft\\windows\\currentversion",
+        ];
+        const PREFIX: &[&str] = &[
+            "software\\classes\\clsid",
+            "software\\classes\\interface",
+            "software\\classes\\typelib",
+            "software\\microsoft\\windows\\currentversion\\uninstall",
+            "software\\microsoft\\windows\\currentversion\\installer",
+            "software\\microsoft\\windows\\currentversion\\sidebyside",
+            "software\\microsoft\\windows nt\\currentversion",
+        ];
+        if EXACT.contains(&lower.as_str())
+            || PREFIX
+                .iter()
+                .any(|critical| lower == *critical || lower.starts_with(&format!("{critical}\\")))
+        {
+            return Risk::Blocked;
+        }
     }
     Risk::Safe
 }
@@ -390,5 +411,52 @@ mod tests {
             ),
             Risk::Blocked
         );
+    }
+
+    #[test]
+    fn blocks_removeself_on_critical_subtrees() {
+        for path in [
+            r"SOFTWARE\Classes",
+            r"SOFTWARE\Classes\CLSID",
+            r"SOFTWARE\Classes\CLSID\{GUID}",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Vendor",
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+        ] {
+            assert_eq!(
+                classify_registry(EditorHive::Hklm, path, true),
+                Risk::Blocked,
+                "должно блокироваться: {path}"
+            );
+        }
+        assert_eq!(
+            classify_registry(EditorHive::Hkcu, r"Software\Classes", true),
+            Risk::Blocked
+        );
+        assert_eq!(
+            classify_registry(EditorHive::Hkcu, r"Software\Vendor\App", true),
+            Risk::Safe
+        );
+    }
+
+    #[test]
+    fn classify_file_canonicalizes_safe_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let link = temp.path().join("junction");
+        let windows = env("WINDIR");
+        let target = format!("{windows}\\System32");
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&link)
+            .arg(&target)
+            .output()
+            .unwrap();
+        if !output.status.success() {
+            // Junction creation can be blocked by policy; nothing to assert then.
+            return;
+        }
+        // Raw path looks Safe (under TEMP), but it resolves into System32.
+        assert_eq!(classify_file(&link.join("kernel32.dll")), Risk::Blocked);
+        let _ = std::fs::remove_dir(&link);
     }
 }
