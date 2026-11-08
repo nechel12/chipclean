@@ -3,6 +3,7 @@ pub mod disk;
 pub mod elevation;
 pub mod file_dialog;
 pub mod paths;
+pub mod profile;
 pub mod recycle_bin;
 
 use std::ffi::OsStr;

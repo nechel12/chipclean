@@ -49,6 +49,36 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             },
         );
 
+        card(&mut columns[1], "Профиль очистки", |ui| {
+            let profile = crate::win::profile::current();
+            ui.label(
+                RichText::new("Пользователь")
+                    .font(font(9.5))
+                    .color(TEXT_DIM),
+            );
+            ui.label(
+                RichText::new(&profile.user)
+                    .font(font(10.0))
+                    .color(TEXT_MUTED),
+            );
+            ui.add_space(8.0);
+            ui.label(RichText::new("Профиль").font(font(9.5)).color(TEXT_DIM));
+            ui.label(
+                RichText::new(&profile.path)
+                    .font(font(9.0))
+                    .color(TEXT_MUTED),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(
+                    "Личные данные, «Загрузки» и корзина чистятся для этого профиля. \
+                     При запуске под другой учётной записью (UAC) это профиль администратора.",
+                )
+                .font(font(9.0))
+                .color(TEXT_DIM),
+            );
+        });
+
         card(&mut columns[1], "Данные приложения", |ui| {
             ui.label(RichText::new("Настройки").font(font(9.5)).color(TEXT_DIM));
             ui.label(

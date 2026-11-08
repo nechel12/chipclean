@@ -120,6 +120,12 @@ fn admin_card(ui: &mut Ui, elevated: bool) {
                     .color(if elevated { TEXT_MUTED } else { WARNING }),
                 );
             });
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new(crate::win::profile::current().user)
+                    .font(font(9.0))
+                    .color(TEXT_DIM),
+            );
         });
 }
 
