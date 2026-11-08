@@ -10,6 +10,8 @@ use std::{
 
 use crossbeam_channel::{Receiver, TryRecvError, unbounded};
 
+use crate::core::job::{self, Job};
+
 use super::traces::{
     self, QuarantinedTrace, TraceCategory, TraceCategoryId, TraceEntry, TraceScanEvent,
 };
@@ -43,6 +45,10 @@ pub enum TraceAction {
     Delete,
 }
 
+enum TraceMutationEvent {
+    Done { text: String, is_error: bool },
+}
+
 pub struct TracesState {
     pub categories: Vec<TraceCategory>,
     pub selected: BTreeSet<TraceCategoryId>,
@@ -58,6 +64,7 @@ pub struct TracesState {
     cancel: Arc<AtomicBool>,
     rx: Option<Receiver<TraceScanEvent>>,
     handle: Option<JoinHandle<()>>,
+    mutation_job: Option<Job<TraceMutationEvent>>,
 }
 
 impl TracesState {
@@ -84,6 +91,7 @@ impl TracesState {
             cancel: Arc::new(AtomicBool::new(false)),
             rx: None,
             handle: None,
+            mutation_job: None,
         }
     }
 
@@ -177,6 +185,7 @@ impl TracesState {
 
     pub fn can_process(&self) -> bool {
         !self.is_scanning()
+            && !self.is_mutating()
             && !self.entries.is_empty()
             && self.selected == self.scanned_categories
             && self
@@ -224,6 +233,9 @@ impl TracesState {
         let Some(action) = self.pending_action else {
             return;
         };
+        if self.is_mutating() {
+            return;
+        }
 
         let entries = self.selected_entries();
         if entries.is_empty() {
@@ -240,58 +252,77 @@ impl TracesState {
 
         self.pending_action = None;
         self.confirm_ack = false;
-
-        match action {
-            TraceAction::Quarantine => match traces::quarantine_entries(&entries) {
-                Ok(count) => {
-                    self.message = Some(Message {
-                        text: format!("Перемещено в карантин: {count}"),
-                        is_error: false,
-                    });
-                    self.start_scan();
-                }
-                Err(err) => {
-                    self.message = Some(Message {
-                        text: format!("Не удалось переместить в карантин: {err}"),
-                        is_error: true,
-                    });
-                }
+        self.mutation_job = Some(Job::spawn(
+            "chipclean-traces-mutation",
+            move |_cancel, tx| {
+                let (text, is_error) = match action {
+                    TraceAction::Quarantine => match traces::quarantine_entries(&entries) {
+                        Ok(count) => (format!("Перемещено в карантин: {count}"), false),
+                        Err(err) => (format!("Не удалось переместить в карантин: {err}"), true),
+                    },
+                    TraceAction::Delete => {
+                        let outcome = traces::delete_entries(&entries);
+                        let mut text = format!("Удалено безвозвратно: {}", outcome.deleted);
+                        if !outcome.errors.is_empty() {
+                            text.push_str(&format!(" · ошибок: {}", outcome.errors.len()));
+                        }
+                        (text, !outcome.errors.is_empty())
+                    }
+                };
+                let _ = tx.send(TraceMutationEvent::Done { text, is_error });
             },
-            TraceAction::Delete => {
-                let outcome = traces::delete_entries(&entries);
-                let mut text = format!("Удалено безвозвратно: {}", outcome.deleted);
-                if !outcome.errors.is_empty() {
-                    text.push_str(&format!(" · ошибок: {}", outcome.errors.len()));
-                }
-                self.message = Some(Message {
-                    text,
-                    is_error: !outcome.errors.is_empty(),
-                });
-                self.start_scan();
-            }
-        }
+        ));
     }
 
     pub fn restore(&mut self, index: usize) {
+        if self.is_mutating() {
+            return;
+        }
         let Some(entry) = self.quarantined.get(index).cloned() else {
             return;
         };
 
-        match traces::restore_quarantined(&entry) {
-            Ok(()) => {
-                self.message = Some(Message {
-                    text: "Объект возвращён на место.".to_owned(),
-                    is_error: false,
-                });
-                self.start_scan();
-            }
-            Err(err) => {
-                self.message = Some(Message {
-                    text: format!("Не удалось вернуть объект: {err}"),
-                    is_error: true,
-                });
+        self.mutation_job = Some(Job::spawn(
+            "chipclean-traces-restore",
+            move |_cancel, tx| {
+                let (text, is_error) = match traces::restore_quarantined(&entry) {
+                    Ok(()) => ("Объект возвращён на место.".to_owned(), false),
+                    Err(err) => (format!("Не удалось вернуть объект: {err}"), true),
+                };
+                let _ = tx.send(TraceMutationEvent::Done { text, is_error });
+            },
+        ));
+    }
+
+    pub fn is_mutating(&self) -> bool {
+        self.mutation_job.is_some()
+    }
+
+    pub fn poll_mutation(&mut self) {
+        let (events, disconnected) = job::drain(&self.mutation_job);
+        let mut finished = false;
+        for event in events {
+            finished = true;
+            match event {
+                TraceMutationEvent::Done { text, is_error } => {
+                    self.message = Some(Message { text, is_error });
+                }
             }
         }
+
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.mutation_job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.message = Some(Message {
+                text: "Операция прервана: поток завершился неожиданно.".to_owned(),
+                is_error: true,
+            });
+        }
+        self.start_scan();
     }
 
     pub fn poll(&mut self) {

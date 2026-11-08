@@ -186,6 +186,18 @@ fn summary(ui: &mut Ui, state: &mut TracesState) {
                 );
             }
 
+            if state.is_mutating() {
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(
+                        RichText::new("Обработка следов…")
+                            .font(font(10.0))
+                            .color(TEXT_MUTED),
+                    );
+                });
+            }
+
             if !state.entries.is_empty()
                 && state.selected != state.scanned_categories
                 && !state.is_scanning()
@@ -289,7 +301,7 @@ fn categories(ui: &mut Ui, state: &mut TracesState) {
     );
     ui.add_space(6.0);
 
-    let busy = state.is_scanning();
+    let busy = state.is_scanning() || state.is_mutating();
     let scanned = matches!(state.scan, TraceScanState::Done { .. });
     let categories = &state.categories;
     let selected = &mut state.selected;

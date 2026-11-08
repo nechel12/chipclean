@@ -222,6 +222,7 @@ impl eframe::App for ChipCleanApp {
         self.community.poll_clean();
         self.startup.poll();
         self.traces.poll();
+        self.traces.poll_mutation();
         self.programs.poll();
 
         if let Some(program) = self.programs.take_traces_request() {
@@ -251,6 +252,7 @@ impl eframe::App for ChipCleanApp {
             || self.startup.is_loading()
             || self.programs.is_loading()
             || self.traces.is_scanning()
+            || self.traces.is_mutating()
         {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
