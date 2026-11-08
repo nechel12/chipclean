@@ -107,24 +107,8 @@ pub fn scan_entries() -> Result<Vec<StartupEntry>> {
 fn scan_entries_with_store(store_path: &Path) -> Result<Vec<StartupEntry>> {
     let store = load_store(store_path)?;
     let mut entries = Vec::new();
-    let mut disabled_registry = HashSet::new();
-    let mut disabled_folders = HashSet::new();
-
-    for disabled in &store.entries {
-        match &disabled.kind {
-            DisabledKind::Registry {
-                hive,
-                key_path,
-                value_name,
-                ..
-            } => {
-                disabled_registry.insert((hive.clone(), key_path.clone(), value_name.clone()));
-            }
-            DisabledKind::Folder { original_path, .. } => {
-                disabled_folders.insert(original_path.clone());
-            }
-        }
-    }
+    let mut live_registry: HashSet<(String, String, String)> = HashSet::new();
+    let mut live_folders: HashSet<PathBuf> = HashSet::new();
 
     for (hive, key_path) in STARTUP_KEYS {
         let Ok(key) = hive.root().open(*key_path) else {
@@ -140,9 +124,7 @@ fn scan_entries_with_store(store_path: &Path) -> Result<Vec<StartupEntry>> {
                 (*key_path).to_owned(),
                 name.clone(),
             );
-            if disabled_registry.contains(&id) {
-                continue;
-            }
+            live_registry.insert(id);
 
             let command = key.get_string(&name).unwrap_or_default();
             entries.push(StartupEntry {
@@ -180,9 +162,7 @@ fn scan_entries_with_store(store_path: &Path) -> Result<Vec<StartupEntry>> {
             if file_name.eq_ignore_ascii_case("desktop.ini") {
                 continue;
             }
-            if disabled_folders.contains(&path) {
-                continue;
-            }
+            live_folders.insert(path.clone());
 
             entries.push(StartupEntry {
                 title: file_name,
@@ -195,6 +175,18 @@ fn scan_entries_with_store(store_path: &Path) -> Result<Vec<StartupEntry>> {
     }
 
     for disabled in store.entries {
+        let stale = match &disabled.kind {
+            DisabledKind::Registry {
+                hive,
+                key_path,
+                value_name,
+                ..
+            } => live_registry.contains(&(hive.clone(), key_path.clone(), value_name.clone())),
+            DisabledKind::Folder { original_path, .. } => live_folders.contains(original_path),
+        };
+        if stale {
+            continue;
+        }
         entries.push(StartupEntry {
             title: disabled.title.clone(),
             command: disabled.command.clone(),
