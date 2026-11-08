@@ -83,6 +83,9 @@ pub struct EditorState {
     pub replace_ack: bool,
     pub replace_hits: Option<Vec<ReplaceHit>>,
     pub replace_message: Option<Message>,
+    replace_find_used: Option<String>,
+    replace_with_used: Option<String>,
+    replace_scope_used: Option<(EditorHive, String)>,
     pub dialog: Option<EditorDialog>,
     pub message: Option<Message>,
     loaded: bool,
@@ -109,6 +112,9 @@ impl EditorState {
             replace_ack: false,
             replace_hits: None,
             replace_message: None,
+            replace_find_used: None,
+            replace_with_used: None,
+            replace_scope_used: None,
             dialog: None,
             message: None,
             loaded: false,
@@ -142,8 +148,7 @@ impl EditorState {
         self.search_hits.clear();
         self.search_open = false;
         self.replace_open = false;
-        self.replace_hits = None;
-        self.replace_message = None;
+        self.clear_replace_results();
         self.expanded.insert(String::new());
         self.load_children(String::new());
         self.load_values();
@@ -185,6 +190,9 @@ impl EditorState {
     }
 
     pub fn select(&mut self, path: String) {
+        if self.selected != path {
+            self.clear_replace_results();
+        }
         self.selected = path;
         self.selected_value = None;
         self.load_values();
@@ -340,17 +348,31 @@ impl EditorState {
 
     pub fn open_replace(&mut self) {
         self.replace_open = true;
-        self.replace_hits = None;
-        self.replace_ack = false;
-        self.replace_message = None;
+        self.clear_replace_results();
     }
 
     pub fn close_replace(&mut self) {
         self.replace_open = false;
+        self.clear_replace_results();
+        self.abort_replace();
+    }
+
+    pub fn clear_replace_results(&mut self) {
         self.replace_hits = None;
         self.replace_ack = false;
         self.replace_message = None;
-        self.abort_replace();
+        self.replace_find_used = None;
+        self.replace_with_used = None;
+        self.replace_scope_used = None;
+    }
+
+    pub fn replace_params_changed(&self) -> bool {
+        if self.replace_hits.is_none() {
+            return false;
+        }
+        self.replace_find_used.as_deref() != Some(self.replace_find.trim())
+            || self.replace_with_used.as_deref() != Some(self.replace_with.as_str())
+            || self.replace_scope_used.as_ref() != Some(&(self.hive, self.selected.clone()))
     }
 
     pub fn find_replacements(&mut self) {
@@ -367,6 +389,9 @@ impl EditorState {
         self.abort_replace();
         self.replace_hits = None;
         self.replace_ack = false;
+        self.replace_find_used = Some(find.clone());
+        self.replace_with_used = Some(self.replace_with.clone());
+        self.replace_scope_used = Some((self.hive, self.selected.clone()));
         self.replace_message = Some(Message {
             text: "Поиск совпадений…".to_owned(),
             is_error: false,
@@ -393,6 +418,13 @@ impl EditorState {
     }
 
     pub fn replace_all(&mut self) {
+        if self.replace_params_changed() {
+            self.replace_message = Some(Message {
+                text: "Параметры поиска изменились; нажмите «Найти» заново.".to_owned(),
+                is_error: true,
+            });
+            return;
+        }
         let Some(hits) = self.replace_hits.clone() else {
             return;
         };
@@ -818,4 +850,79 @@ pub fn value_types() -> [(u32, &'static str); 6] {
         (registry_editor::REG_MULTI_SZ, "REG_MULTI_SZ"),
         (registry_editor::REG_BINARY, "REG_BINARY"),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::registry_editor::{EditorHive, REG_SZ, ReplaceHit};
+
+    fn sample_hit() -> ReplaceHit {
+        ReplaceHit {
+            hive: EditorHive::Hkcu,
+            path: r"Software\ChipCleanReplaceState".to_owned(),
+            value_name: "Value".to_owned(),
+            ty: REG_SZ,
+            before: "a".to_owned(),
+            after: "b".to_owned(),
+        }
+    }
+
+    fn armed_state() -> EditorState {
+        let mut state = EditorState::new();
+        state.replace_find = "a".to_owned();
+        state.replace_with = "b".to_owned();
+        state.selected = r"Software\ChipCleanReplaceState".to_owned();
+        state.replace_hits = Some(vec![sample_hit()]);
+        state.replace_find_used = Some("a".to_owned());
+        state.replace_with_used = Some("b".to_owned());
+        state.replace_scope_used = Some((EditorHive::Hkcu, state.selected.clone()));
+        state
+    }
+
+    #[test]
+    fn replace_params_match_right_after_search() {
+        let state = armed_state();
+        assert!(!state.replace_params_changed());
+    }
+
+    #[test]
+    fn changing_replacement_invalidates_hits() {
+        let mut state = armed_state();
+        state.replace_with = "c".to_owned();
+        assert!(state.replace_params_changed());
+    }
+
+    #[test]
+    fn changing_find_invalidates_hits() {
+        let mut state = armed_state();
+        state.replace_find = "a ".to_owned();
+        assert!(!state.replace_params_changed());
+        state.replace_find = "z".to_owned();
+        assert!(state.replace_params_changed());
+    }
+
+    #[test]
+    fn replace_all_refuses_stale_params() {
+        let mut state = armed_state();
+        state.replace_ack = true;
+        state.replace_with = "c".to_owned();
+        state.replace_all();
+        assert!(state.replace_job.is_none());
+        assert!(
+            state
+                .replace_message
+                .as_ref()
+                .is_some_and(|message| message.is_error)
+        );
+        assert!(state.replace_hits.is_some());
+    }
+
+    #[test]
+    fn selecting_another_branch_clears_hits() {
+        let mut state = armed_state();
+        state.select(r"Software\ChipCleanReplaceStateOther".to_owned());
+        assert!(state.replace_hits.is_none());
+        assert!(!state.replace_params_changed());
+    }
 }

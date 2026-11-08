@@ -225,6 +225,7 @@ pub fn toggle_entry(entry: &StartupEntry) -> Result<String> {
         &config::backups_dir(),
         &config::startup_quarantine_dir(),
         &startup_roots,
+        STARTUP_KEYS,
     )
 }
 
@@ -234,6 +235,7 @@ fn toggle_entry_with_paths(
     backup_dir: &Path,
     quarantine_dir: &Path,
     startup_roots: &[PathBuf],
+    allowed_registry_keys: &[(RegistryHive, &str)],
 ) -> Result<String> {
     match (&entry.kind, entry.enabled) {
         (
@@ -243,14 +245,44 @@ fn toggle_entry_with_paths(
                 value_name,
             },
             true,
-        ) => disable_registry(*hive, key_path, value_name, store_path, backup_dir),
+        ) => disable_registry(
+            *hive,
+            key_path,
+            value_name,
+            store_path,
+            backup_dir,
+            allowed_registry_keys,
+        ),
         (StartupEntryKind::Folder { path }, true) => {
             disable_folder(path, store_path, quarantine_dir, startup_roots)
         }
-        (StartupEntryKind::Disabled(disabled), false) => {
-            enable_disabled(disabled, store_path, quarantine_dir, startup_roots)
-        }
+        (StartupEntryKind::Disabled(disabled), false) => enable_disabled(
+            disabled,
+            store_path,
+            quarantine_dir,
+            startup_roots,
+            allowed_registry_keys,
+        ),
         _ => bail!("Состояние записи изменилось; обновите список."),
+    }
+}
+
+fn ensure_allowed_registry_key(
+    hive: RegistryHive,
+    key_path: &str,
+    allowed: &[(RegistryHive, &str)],
+) -> Result<()> {
+    let normalized = key_path.trim().trim_matches('\\').to_ascii_lowercase();
+    if allowed.iter().any(|(allowed_hive, allowed_path)| {
+        *allowed_hive == hive && allowed_path.to_ascii_lowercase() == normalized
+    }) {
+        Ok(())
+    } else {
+        bail!(
+            "Раздел {}\\{} вне разрешённого списка автозагрузки; операция отменена.",
+            hive.short(),
+            key_path
+        )
     }
 }
 
@@ -260,7 +292,9 @@ fn disable_registry(
     value_name: &str,
     store_path: &Path,
     backup_dir: &Path,
+    allowed_registry_keys: &[(RegistryHive, &str)],
 ) -> Result<String> {
+    ensure_allowed_registry_key(hive, key_path, allowed_registry_keys)?;
     let key = hive
         .root()
         .options()
@@ -389,6 +423,7 @@ fn enable_disabled(
     store_path: &Path,
     quarantine_dir: &Path,
     startup_roots: &[PathBuf],
+    allowed_registry_keys: &[(RegistryHive, &str)],
 ) -> Result<String> {
     let mut store = load_store(store_path)?;
     let position = store
@@ -406,9 +441,13 @@ fn enable_disabled(
             value_bytes,
         } => {
             let hive = parse_hive(hive)?;
+            ensure_allowed_registry_key(hive, key_path, allowed_registry_keys)?;
             let key = hive
                 .root()
-                .create(key_path)
+                .options()
+                .read()
+                .write()
+                .open(key_path)
                 .map_err(|err| anyhow!("не удалось открыть {}: {err}", hive.short()))?;
 
             if key.get_value(value_name).is_ok() {
@@ -643,9 +682,15 @@ mod tests {
         let backup_dir = dir.path().join("backups");
         let quarantine_dir = dir.path().join("quarantine");
 
-        let message =
-            toggle_entry_with_paths(&entry, &store_path, &backup_dir, &quarantine_dir, &[])
-                .unwrap();
+        let message = toggle_entry_with_paths(
+            &entry,
+            &store_path,
+            &backup_dir,
+            &quarantine_dir,
+            &[],
+            &[(RegistryHive::CurrentUser, key_path.as_str())],
+        )
+        .unwrap();
         assert!(message.contains("Отключено"));
         assert!(
             CURRENT_USER
@@ -668,9 +713,15 @@ mod tests {
             kind: StartupEntryKind::Disabled(store.entries[0].clone()),
         };
 
-        let message =
-            toggle_entry_with_paths(&disabled, &store_path, &backup_dir, &quarantine_dir, &[])
-                .unwrap();
+        let message = toggle_entry_with_paths(
+            &disabled,
+            &store_path,
+            &backup_dir,
+            &quarantine_dir,
+            &[],
+            &[(RegistryHive::CurrentUser, key_path.as_str())],
+        )
+        .unwrap();
         assert_eq!(message, "Включено");
         assert_eq!(
             CURRENT_USER
@@ -714,6 +765,7 @@ mod tests {
             &backup_dir,
             &quarantine_dir,
             std::slice::from_ref(&original_dir),
+            &[],
         )
         .unwrap();
         assert!(!original.exists());
@@ -734,6 +786,7 @@ mod tests {
             &backup_dir,
             &quarantine_dir,
             std::slice::from_ref(&original_dir),
+            &[],
         )
         .unwrap();
         assert!(original.exists());
@@ -785,6 +838,7 @@ mod tests {
             &dir.path().join("backups"),
             &quarantine,
             std::slice::from_ref(&startup),
+            &[],
         );
         assert!(result.is_err());
         assert!(stored.exists());
@@ -835,10 +889,67 @@ mod tests {
             &dir.path().join("backups"),
             &quarantine,
             std::slice::from_ref(&startup),
+            &[],
         );
         assert!(result.is_err());
         assert!(stored.exists());
         assert!(!original.exists());
+        assert_eq!(load_store(&store_path).unwrap().entries.len(), 1);
+    }
+
+    #[test]
+    fn enable_refuses_registry_key_outside_allowlist() {
+        let _guard = crate::core::registry_test_guard();
+        let unique = format!(
+            "ChipCleanStartupOutside-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_micros()
+        );
+        let outside = format!(r"Software\{unique}");
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("store.json");
+        let disabled = DisabledEntry {
+            source: StartupSource::HkcuRun,
+            title: "Debugger".to_owned(),
+            command: "cmd.exe".to_owned(),
+            disabled_at: now(),
+            kind: DisabledKind::Registry {
+                hive: "HKCU".to_owned(),
+                key_path: outside.clone(),
+                value_name: "Debugger".to_owned(),
+                value_type: 1,
+                value_bytes: b"cmd.exe".to_vec(),
+            },
+        };
+        save_store(
+            &store_path,
+            &DisabledStore {
+                entries: vec![disabled.clone()],
+            },
+        )
+        .unwrap();
+        let entry = StartupEntry {
+            title: disabled.title.clone(),
+            command: disabled.command.clone(),
+            source: disabled.source,
+            enabled: false,
+            kind: StartupEntryKind::Disabled(disabled),
+        };
+
+        let result = toggle_entry_with_paths(
+            &entry,
+            &store_path,
+            &dir.path().join("backups"),
+            &dir.path().join("quarantine"),
+            &[],
+            &[(
+                RegistryHive::CurrentUser,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+            )],
+        );
+
+        assert!(result.is_err());
+        assert!(CURRENT_USER.open(&outside).is_err());
         assert_eq!(load_store(&store_path).unwrap().entries.len(), 1);
     }
 }

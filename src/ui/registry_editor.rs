@@ -645,6 +645,7 @@ fn replace_window(ctx: &egui::Context, state: &mut EditorState) {
             }
 
             let hits = state.replace_hits.as_deref().unwrap_or_default();
+            let stale = state.replace_params_changed();
             if !hits.is_empty() {
                 ui.add_space(8.0);
                 widgets::line(ui);
@@ -654,6 +655,16 @@ fn replace_window(ctx: &egui::Context, state: &mut EditorState) {
                         .font(font_semibold(10.5))
                         .color(TEXT),
                 );
+                if stale {
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(
+                            "Параметры поиска изменились — нажмите «Найти», чтобы обновить список.",
+                        )
+                        .font(font(9.0))
+                        .color(WARNING),
+                    );
+                }
                 ui.add_space(4.0);
                 egui::ScrollArea::vertical()
                     .id_salt("registry-replace-hits")
@@ -700,7 +711,7 @@ fn replace_window(ctx: &egui::Context, state: &mut EditorState) {
                         ui,
                         "Заменить всё",
                         ph::SWAP,
-                        state.replace_ack && !busy,
+                        state.replace_ack && !busy && !stale,
                     )
                     .clicked()
                     {
@@ -708,9 +719,7 @@ fn replace_window(ctx: &egui::Context, state: &mut EditorState) {
                     }
                     ui.add_space(8.0);
                     if widgets::secondary_button(ui, "Очистить").clicked() {
-                        state.replace_hits = None;
-                        state.replace_ack = false;
-                        state.replace_message = None;
+                        state.clear_replace_results();
                     }
                 });
             }
