@@ -53,6 +53,7 @@ pub struct TracesState {
     pub pending_action: Option<TraceAction>,
     pub confirm_ack: bool,
     pub message: Option<Message>,
+    pub focus_program: Option<String>,
     loaded: bool,
     cancel: Arc<AtomicBool>,
     rx: Option<Receiver<TraceScanEvent>>,
@@ -78,6 +79,7 @@ impl TracesState {
             pending_action: None,
             confirm_ack: false,
             message: None,
+            focus_program: None,
             loaded: false,
             cancel: Arc::new(AtomicBool::new(false)),
             rx: None,
@@ -133,15 +135,28 @@ impl TracesState {
 
     pub fn scan_after_uninstall(&mut self, program: &str) {
         self.loaded = true;
+        self.focus_program = Some(program.to_owned());
         self.message = Some(Message {
             text: format!(
-                "Проверка следов после удаления «{program}». Отметьте оставшиеся папки и ярлыки."
+                "Проверка следов после удаления «{program}». Дождитесь завершения деинсталлятора; отметьте оставшиеся папки и ярлыки."
             ),
             is_error: false,
         });
-        if !self.is_scanning() {
-            self.start_scan();
+        if self.selected.is_empty() {
+            self.selected = self
+                .categories
+                .iter()
+                .filter(|category| category.default_enabled)
+                .map(|category| category.id)
+                .collect();
         }
+        if self.is_scanning() {
+            self.cancel.store(true, Ordering::Relaxed);
+            self.scan = TraceScanState::Idle;
+            self.rx = None;
+            self.handle = None;
+        }
+        self.start_scan();
     }
 
     pub fn is_scanning(&self) -> bool {

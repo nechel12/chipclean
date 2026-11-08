@@ -21,6 +21,15 @@ pub fn show(ui: &mut Ui, state: &mut TracesState) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             info_card(ui);
+            if let Some(program) = &state.focus_program {
+                ui.add_space(10.0);
+                widgets::inline_hint(
+                    ui,
+                    ph::FOOTPRINTS,
+                    &format!("Следы после удаления «{program}»"),
+                    ACCENT,
+                );
+            }
             ui.add_space(14.0);
             summary(ui, state);
             ui.add_space(14.0);
