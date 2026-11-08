@@ -571,10 +571,22 @@ fn clean_history_file(path: &Path) -> Result<u64> {
         return Ok(0);
     }
 
+    let has_inputhistory = table_exists(&conn, "moz_inputhistory")?;
+    let has_places = table_exists(&conn, "moz_places")?;
     let tx = conn.transaction()?;
     let deleted = tx.execute("DELETE FROM moz_historyvisits", [])?;
+    if has_inputhistory {
+        tx.execute("DELETE FROM moz_inputhistory", [])?;
+    }
+    if has_places {
+        // Orphaned places are pure history; foreign_count > 0 means the URL is
+        // bookmarked or otherwise referenced, so those rows are kept.
+        tx.execute("DELETE FROM moz_places WHERE foreign_count = 0", [])?;
+    }
     tx.commit()?;
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    if let Err(err) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+        tracing::warn!(%err, "firefox wal checkpoint failed");
+    }
     Ok(deleted as u64)
 }
 
@@ -941,12 +953,16 @@ mod tests {
         let path = dir.path().join("places.sqlite");
         let conn = Connection::open(&path).unwrap();
         conn.execute_batch(
-            "CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT);
+            "CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT, foreign_count INTEGER NOT NULL DEFAULT 0);
              CREATE TABLE moz_bookmarks (id INTEGER PRIMARY KEY, fk INTEGER, title TEXT);
              CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, place_id INTEGER, visit_date INTEGER);
-             INSERT INTO moz_places (id, url) VALUES (1, 'https://example.com');
+             CREATE TABLE moz_inputhistory (place_id INTEGER, input TEXT, use_count INTEGER);
+             INSERT INTO moz_places (id, url, foreign_count) VALUES (1, 'https://bookmarked.example', 1);
+             INSERT INTO moz_places (id, url, foreign_count) VALUES (2, 'https://orphan.example', 0);
              INSERT INTO moz_bookmarks (id, fk, title) VALUES (1, 1, 'Example');
-             INSERT INTO moz_historyvisits (place_id, visit_date) VALUES (1, 123);",
+             INSERT INTO moz_historyvisits (place_id, visit_date) VALUES (1, 123);
+             INSERT INTO moz_historyvisits (place_id, visit_date) VALUES (2, 456);
+             INSERT INTO moz_inputhistory (place_id, input, use_count) VALUES (2, 'orphan', 1);",
         )
         .unwrap();
         drop(conn);
@@ -962,11 +978,11 @@ mod tests {
             vec![pattern.as_str()],
         );
         let scan = scan_target(&target);
-        assert_eq!(scan.history, 1);
+        assert_eq!(scan.history, 2);
         assert_eq!(scan.errors, 0);
 
         let report = clean_target(&target);
-        assert_eq!(report.history, 1);
+        assert_eq!(report.history, 2);
         assert!(report.errors.is_empty());
         assert!(path.exists());
 
@@ -979,8 +995,22 @@ mod tests {
         let bookmarks: i64 = conn
             .query_row("SELECT COUNT(*) FROM moz_bookmarks", [], |row| row.get(0))
             .unwrap();
+        let places: i64 = conn
+            .query_row("SELECT COUNT(*) FROM moz_places", [], |row| row.get(0))
+            .unwrap();
+        let kept_url: String = conn
+            .query_row("SELECT url FROM moz_places", [], |row| row.get(0))
+            .unwrap();
+        let inputhistory: i64 = conn
+            .query_row("SELECT COUNT(*) FROM moz_inputhistory", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(visits, 0);
         assert_eq!(bookmarks, 1);
+        assert_eq!(places, 1);
+        assert_eq!(kept_url, "https://bookmarked.example");
+        assert_eq!(inputhistory, 0);
     }
 
     #[test]
