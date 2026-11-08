@@ -312,6 +312,11 @@ impl EditorState {
                             self.message = Some(Message {
                                 text: if hits.is_empty() {
                                     "Ничего не найдено.".to_owned()
+                                } else if hits.len() >= 200 {
+                                    format!(
+                                        "Найдено: {} (достигнут лимит, возможны ещё совпадения)",
+                                        hits.len()
+                                    )
                                 } else {
                                     format!("Найдено: {}", hits.len())
                                 },

@@ -315,12 +315,12 @@ pub fn search_cancellable(
                 if hits.len() >= cap {
                     break;
                 }
-                let preview = preview_value(&value);
-                if name.to_lowercase().contains(&query) || preview.to_lowercase().contains(&query) {
+                let text = value_to_text(&value);
+                if name.to_lowercase().contains(&query) || text.to_lowercase().contains(&query) {
                     hits.push(SearchHit {
                         path: path.clone(),
                         value_name: Some(name),
-                        detail: preview,
+                        detail: preview_value(&value),
                     });
                 }
             }
@@ -328,7 +328,8 @@ pub fn search_cancellable(
 
         if let Ok(keys) = key.keys() {
             for child in keys {
-                if matches!(path.as_str(), "" | "Software") && child.eq_ignore_ascii_case("Classes")
+                if (path.is_empty() || path.eq_ignore_ascii_case("Software"))
+                    && child.eq_ignore_ascii_case("Classes")
                 {
                     continue;
                 }
@@ -424,7 +425,8 @@ pub fn find_replacements_cancellable(
 
         if let Ok(keys) = key.keys() {
             for child in keys {
-                if matches!(path.as_str(), "" | "Software") && child.eq_ignore_ascii_case("Classes")
+                if (path.is_empty() || path.eq_ignore_ascii_case("Software"))
+                    && child.eq_ignore_ascii_case("Classes")
                 {
                     continue;
                 }
@@ -574,15 +576,23 @@ pub fn value_to_text(value: &windows_registry::Value) -> String {
             .unwrap_or_default(),
         REG_MULTI_SZ => {
             let wide = value.as_wide();
+            // MULTI_SZ is a \0-separated list with a trailing terminator null;
+            // drop only that final null so empty elements survive a round-trip.
+            let wide = if wide.ends_with(&[0, 0]) {
+                &wide[..wide.len() - 1]
+            } else {
+                wide
+            };
             let mut parts = Vec::new();
             let mut start = 0;
             for (index, ch) in wide.iter().enumerate() {
                 if *ch == 0 {
-                    if index > start {
-                        parts.push(String::from_utf16_lossy(&wide[start..index]));
-                    }
+                    parts.push(String::from_utf16_lossy(&wide[start..index]));
                     start = index + 1;
                 }
+            }
+            if start < wide.len() {
+                parts.push(String::from_utf16_lossy(&wide[start..]));
             }
             parts.join("\n")
         }
@@ -694,8 +704,13 @@ pub fn import_reg_file(path: &Path) -> Result<()> {
 
 pub fn split_parent(path: &str) -> Option<(String, String)> {
     let trimmed = path.trim_matches('\\');
-    let (parent, name) = trimmed.rsplit_once('\\')?;
-    Some((parent.to_owned(), name.to_owned()))
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.rsplit_once('\\') {
+        Some((parent, name)) => Some((parent.to_owned(), name.to_owned())),
+        None => Some((String::new(), trimmed.to_owned())),
+    }
 }
 
 pub fn join_path(parent: &str, name: &str) -> String {
@@ -904,5 +919,63 @@ mod tests {
         assert!(CURRENT_USER.open(&child_path).is_err());
 
         let _ = CURRENT_USER.remove_tree(&parent);
+    }
+
+    #[test]
+    fn split_parent_handles_first_level_keys() {
+        assert_eq!(
+            split_parent("Environment"),
+            Some((String::new(), "Environment".to_owned()))
+        );
+        assert_eq!(
+            split_parent(r"Software\App"),
+            Some(("Software".to_owned(), "App".to_owned()))
+        );
+        assert_eq!(split_parent(""), None);
+        assert_eq!(split_parent("\\"), None);
+    }
+
+    #[test]
+    fn multi_sz_preserves_empty_elements() {
+        let _guard = crate::core::registry_test_guard();
+        let unique = format!(
+            "ChipCleanMultiSz-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_micros()
+        );
+        let path = format!(r"Software\{unique}");
+        let key = CURRENT_USER.create(&path).unwrap();
+        write_raw(&key, "List", REG_MULTI_SZ, "a\n\nb").unwrap();
+        drop(key);
+
+        let (ty, text) = read_value_text(EditorHive::Hkcu, &path, "List").unwrap();
+        assert_eq!(ty, REG_MULTI_SZ);
+        assert_eq!(text, "a\n\nb");
+
+        let _ = CURRENT_USER.remove_tree(&path);
+    }
+
+    #[test]
+    fn search_matches_beyond_preview_length() {
+        let _guard = crate::core::registry_test_guard();
+        let unique = format!(
+            "ChipCleanSearch-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_micros()
+        );
+        let path = format!(r"Software\{unique}");
+        let key = CURRENT_USER.create(&path).unwrap();
+        let long = format!("{}NEEDLE", "x".repeat(150));
+        write_raw(&key, "Long", REG_SZ, &long).unwrap();
+        drop(key);
+
+        let cancel = AtomicBool::new(false);
+        let hits = search_cancellable(EditorHive::Hkcu, &path, "NEEDLE", 10, &cancel).unwrap();
+        assert!(
+            hits.iter()
+                .any(|hit| hit.value_name.as_deref() == Some("Long"))
+        );
+
+        let _ = CURRENT_USER.remove_tree(&path);
     }
 }
