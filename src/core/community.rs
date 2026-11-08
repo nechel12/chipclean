@@ -169,8 +169,12 @@ fn parse_file_key(value: &str) -> Option<FileSpec> {
             "REMOVESELF" => {}
             _ => {
                 let mask = part.trim();
-                if !mask.is_empty() && !path.contains('*') && !path.contains('?') {
-                    path = format!("{path}\\{mask}");
+                if !mask.is_empty() {
+                    let base = path
+                        .trim_end_matches("\\*.*")
+                        .trim_end_matches("\\*")
+                        .trim_end_matches('\\');
+                    path = format!("{base}\\{mask}");
                 }
             }
         }
@@ -242,7 +246,17 @@ fn parse_excludes(section: &Section) -> (Vec<String>, Vec<String>) {
         let value = value.trim();
         let first = value.split('|').next().unwrap_or_default().trim();
         if let Some(rest) = value.strip_prefix("FILE|") {
-            files.push(rest.split('|').next().unwrap_or_default().trim().to_owned());
+            let mut parts = rest
+                .split('|')
+                .map(str::trim)
+                .filter(|part| !part.is_empty() && !part.eq_ignore_ascii_case("REGEX"));
+            if let Some(dir) = parts.next() {
+                let combined = match parts.next() {
+                    Some(mask) => format!("{dir}\\{mask}"),
+                    None => dir.to_owned(),
+                };
+                files.push(combined);
+            }
         } else if let Some(rest) = value.strip_prefix("REG|") {
             registry.push(rest.split('|').next().unwrap_or_default().trim().to_owned());
         } else if parse_hive_path(first).is_some() {
@@ -349,5 +363,30 @@ ExcludeKey3=%TEMP%\file.txt
         let bare = parse_reg_key(r"HKCU\Software\ChipCleanTest").unwrap();
         assert!(bare.value.is_none());
         assert!(!bare.remove_self);
+    }
+
+    #[test]
+    fn file_key_combines_mask_even_with_wildcard_path() {
+        let text = "[Masked]\nFileKey1=%TEMP%\\App\\*|*.log|RECURSE\n";
+        let sections = parse_sections(text);
+        let files = parse_files(&sections[0]);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].pattern.ends_with(r"\*.log"));
+        assert!(!files[0].pattern.contains(r"\*\"));
+        assert!(files[0].recurse);
+    }
+
+    #[test]
+    fn exclude_key_keeps_the_file_mask() {
+        let text = "[Excluded]\nExcludeKey1=FILE|%TEMP%\\App|keep.log\nExcludeKey2=FILE|%TEMP%\\App\\sub\n";
+        let sections = parse_sections(text);
+        let (files, _) = parse_excludes(&sections[0]);
+        assert_eq!(
+            files,
+            vec![
+                r"%TEMP%\App\keep.log".to_owned(),
+                r"%TEMP%\App\sub".to_owned(),
+            ]
+        );
     }
 }

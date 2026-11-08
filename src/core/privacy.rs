@@ -438,6 +438,38 @@ pub fn expand_pattern(pattern: &str) -> Vec<PathBuf> {
 
 fn collect_files(target: &DataTarget, spec: &FileSpec) -> Result<Vec<(PathBuf, u64)>> {
     let mut files = Vec::new();
+    let expanded = expand_env(&spec.pattern).replace('/', "\\");
+    if let Some((base, mask)) = split_dir_mask(&expanded) {
+        let base_path = PathBuf::from(base);
+        if base_path.is_dir()
+            && let Ok(pattern) = glob::Pattern::new(&mask.to_lowercase())
+        {
+            let walker = if spec.recurse {
+                WalkDir::new(&base_path).follow_root_links(false)
+            } else {
+                WalkDir::new(&base_path)
+                    .max_depth(1)
+                    .follow_root_links(false)
+            };
+            for entry in walker.into_iter().filter_map(|entry| entry.ok()) {
+                let path = entry.path();
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                if !pattern.matches(&name) || is_excluded(path, &target.exclude_files) {
+                    continue;
+                }
+                let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+                files.push((path.to_path_buf(), size));
+            }
+        }
+        return Ok(files);
+    }
+
     for root in expand_pattern(&spec.pattern) {
         if root.is_file() {
             if !is_excluded(&root, &target.exclude_files) {
@@ -464,6 +496,20 @@ fn collect_files(target: &DataTarget, spec: &FileSpec) -> Result<Vec<(PathBuf, u
         }
     }
     Ok(files)
+}
+
+fn split_dir_mask(pattern: &str) -> Option<(String, String)> {
+    if !pattern.contains('*') && !pattern.contains('?') {
+        return None;
+    }
+    let (base, mask) = pattern.rsplit_once('\\')?;
+    if base.is_empty() || base.contains('*') || base.contains('?') {
+        return None;
+    }
+    if !mask.contains('*') && !mask.contains('?') {
+        return None;
+    }
+    Some((base.to_owned(), mask.to_owned()))
 }
 
 fn scan_history(spec: &HistorySpec) -> (u64, u64) {
@@ -740,7 +786,14 @@ fn is_excluded(path: &Path, excludes: &[String]) -> bool {
     let normalized = path.to_string_lossy().replace('\\', "/").to_lowercase();
     excludes.iter().any(|pattern| {
         let pattern = expand_env(pattern).replace('\\', "/").to_lowercase();
-        glob::Pattern::new(&pattern)
+        let pattern = pattern.trim_end_matches('/');
+        if pattern.is_empty() {
+            return false;
+        }
+        if normalized == pattern || normalized.starts_with(&format!("{pattern}/")) {
+            return true;
+        }
+        glob::Pattern::new(pattern)
             .map(|pattern| pattern.matches(&normalized))
             .unwrap_or(false)
     })
@@ -1133,5 +1186,91 @@ mod tests {
         assert_eq!(report.registry, 4);
         assert!(report.errors.is_empty());
         assert!(CURRENT_USER.open(&key_path).is_err());
+    }
+
+    #[test]
+    fn splits_trailing_mask_from_directory() {
+        assert_eq!(
+            split_dir_mask(r"C:\App\cache\*.log"),
+            Some((r"C:\App\cache".to_owned(), "*.log".to_owned()))
+        );
+        assert_eq!(split_dir_mask(r"C:\App\cache"), None);
+        assert_eq!(split_dir_mask(r"C:\*\cache\*.log"), None);
+    }
+
+    #[test]
+    fn recurse_mask_walks_subdirectories() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.log"), b"a").unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("b.log"), b"b").unwrap();
+        fs::write(sub.join("c.txt"), b"c").unwrap();
+
+        let target = target(
+            "test",
+            "Test",
+            "Test",
+            "Test",
+            true,
+            None,
+            vec![file(&format!("{}\\*.log", dir.path().display()), true)],
+            vec![],
+        );
+        let files = collect_files(&target, &target.files[0]).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|(path, _)| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(files.len(), 2);
+        assert!(names.contains(&"a.log".to_owned()));
+        assert!(names.contains(&"b.log".to_owned()));
+    }
+
+    #[test]
+    fn non_recurse_mask_stays_top_level() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.log"), b"a").unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("b.log"), b"b").unwrap();
+
+        let target = target(
+            "test",
+            "Test",
+            "Test",
+            "Test",
+            true,
+            None,
+            vec![file(&format!("{}\\*.log", dir.path().display()), false)],
+            vec![],
+        );
+        let files = collect_files(&target, &target.files[0]).unwrap();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn exclude_mask_protects_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("keep.log"), b"k").unwrap();
+        fs::write(dir.path().join("drop.log"), b"d").unwrap();
+
+        let mut target = target(
+            "test",
+            "Test",
+            "Test",
+            "Test",
+            true,
+            None,
+            vec![file(&format!("{}\\*.log", dir.path().display()), true)],
+            vec![],
+        );
+        target.exclude_files = vec![dir.path().join("keep.log").display().to_string()];
+        let files = collect_files(&target, &target.files[0]).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].0.file_name().unwrap().to_string_lossy(),
+            "drop.log"
+        );
     }
 }
