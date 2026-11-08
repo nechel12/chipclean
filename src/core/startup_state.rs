@@ -17,6 +17,13 @@ pub struct Message {
     pub is_error: bool,
 }
 
+enum ToggleEvent {
+    Done {
+        tab: StartupTab,
+        result: Result<String, String>,
+    },
+}
+
 #[derive(Clone)]
 pub struct PendingToggle {
     pub tab: StartupTab,
@@ -42,6 +49,7 @@ pub struct StartupState {
     run_job: Option<Job<Result<Vec<StartupEntry>, String>>>,
     tasks_job: Option<Job<Result<Vec<TaskEntry>, String>>>,
     services_job: Option<Job<Result<Vec<ServiceEntry>, String>>>,
+    toggle_job: Option<Job<ToggleEvent>>,
 }
 
 impl StartupState {
@@ -59,6 +67,7 @@ impl StartupState {
             run_job: None,
             tasks_job: None,
             services_job: None,
+            toggle_job: None,
         }
     }
 
@@ -122,6 +131,7 @@ impl StartupState {
         self.poll_run();
         self.poll_tasks();
         self.poll_services();
+        self.poll_toggle();
     }
 
     fn poll_run(&mut self) {
@@ -216,11 +226,12 @@ impl StartupState {
     }
 
     pub fn is_loading(&self) -> bool {
-        match self.tab {
-            StartupTab::Run => self.run_job.is_some(),
-            StartupTab::Tasks => self.tasks_job.is_some(),
-            StartupTab::Services => self.services_job.is_some(),
-        }
+        self.toggle_job.is_some()
+            || match self.tab {
+                StartupTab::Run => self.run_job.is_some(),
+                StartupTab::Tasks => self.tasks_job.is_some(),
+                StartupTab::Services => self.services_job.is_some(),
+            }
     }
 
     pub fn request_toggle(&mut self, index: usize) {
@@ -295,6 +306,9 @@ impl StartupState {
     }
 
     fn toggle_at(&mut self, tab: StartupTab, index: usize) {
+        if self.toggle_job.is_some() {
+            return;
+        }
         match tab {
             StartupTab::Run => self.toggle_run(index),
             StartupTab::Tasks => self.toggle_task(index),
@@ -306,36 +320,82 @@ impl StartupState {
         let Some(entry) = self.entries.get(index).cloned() else {
             return;
         };
-
-        match startup::toggle_entry(&entry) {
-            Ok(message) => self.set_ok(message),
-            Err(err) => self.set_error(err.to_string()),
-        }
-        self.reload_run();
+        self.toggle_job = Some(Job::spawn(
+            "chipclean-startup-toggle",
+            move |_cancel, tx| {
+                let result = startup::toggle_entry(&entry).map_err(|err| err.to_string());
+                let _ = tx.send(ToggleEvent::Done {
+                    tab: StartupTab::Run,
+                    result,
+                });
+            },
+        ));
     }
 
     fn toggle_task(&mut self, index: usize) {
         let Some(entry) = self.tasks.get(index).cloned() else {
             return;
         };
-
-        match tasks::set_task_enabled(&entry.path, !entry.enabled) {
-            Ok(message) => self.set_ok(message),
-            Err(err) => self.set_error(err.to_string()),
-        }
-        self.reload_tasks();
+        self.toggle_job = Some(Job::spawn(
+            "chipclean-startup-toggle",
+            move |_cancel, tx| {
+                let result = tasks::set_task_enabled(&entry.path, !entry.enabled)
+                    .map_err(|err| err.to_string());
+                let _ = tx.send(ToggleEvent::Done {
+                    tab: StartupTab::Tasks,
+                    result,
+                });
+            },
+        ));
     }
 
     fn toggle_service(&mut self, index: usize) {
         let Some(entry) = self.services.get(index).cloned() else {
             return;
         };
+        self.toggle_job = Some(Job::spawn(
+            "chipclean-startup-toggle",
+            move |_cancel, tx| {
+                let result = services::toggle_service(&entry).map_err(|err| err.to_string());
+                let _ = tx.send(ToggleEvent::Done {
+                    tab: StartupTab::Services,
+                    result,
+                });
+            },
+        ));
+    }
 
-        match services::toggle_service(&entry) {
-            Ok(message) => self.set_ok(message),
-            Err(err) => self.set_error(err.to_string()),
+    fn poll_toggle(&mut self) {
+        let (events, disconnected) = job::drain(&self.toggle_job);
+        let mut finished = false;
+        let mut reload_tab = None;
+        for event in events {
+            finished = true;
+            match event {
+                ToggleEvent::Done { tab, result } => {
+                    match result {
+                        Ok(message) => self.set_ok(message),
+                        Err(err) => self.set_error(err),
+                    }
+                    reload_tab = Some(tab);
+                }
+            }
         }
-        self.reload_services();
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.toggle_job.take() {
+            job.finish();
+        }
+        if !finished {
+            self.set_error("Операция прервана: поток завершился неожиданно.".to_owned());
+        }
+        match reload_tab {
+            Some(StartupTab::Run) => self.reload_run(),
+            Some(StartupTab::Tasks) => self.reload_tasks(),
+            Some(StartupTab::Services) => self.reload_services(),
+            None => {}
+        }
     }
 
     pub fn total_count(&self, tab: StartupTab) -> usize {
