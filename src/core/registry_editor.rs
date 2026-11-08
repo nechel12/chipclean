@@ -476,9 +476,26 @@ pub fn replace_values(hits: &[ReplaceHit], backup_dir: &Path) -> Result<ReplaceR
     }
 
     for hit in hits {
-        let key = open_key_rw(hit.hive, &hit.path)?;
-        write_raw(&key, &hit.value_name, hit.ty, &hit.after)?;
-        report.replaced += 1;
+        let result = open_key_rw(hit.hive, &hit.path)
+            .and_then(|key| write_raw(&key, &hit.value_name, hit.ty, &hit.after));
+        match result {
+            Ok(()) => report.replaced += 1,
+            Err(err) => {
+                journal(json!({
+                    "ts": Utc::now().to_rfc3339(),
+                    "event": "registry_replace_partial",
+                    "values": report.replaced,
+                    "total": hits.len(),
+                    "backup": safety_dir.display().to_string(),
+                }));
+                bail!(
+                    "Заменено {} из {}; операция остановлена: {err:#}. Бэкап: {}",
+                    report.replaced,
+                    hits.len(),
+                    safety_dir.display()
+                );
+            }
+        }
     }
 
     journal(json!({

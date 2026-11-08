@@ -86,6 +86,7 @@ pub struct EditorState {
     replace_find_used: Option<String>,
     replace_with_used: Option<String>,
     replace_scope_used: Option<(EditorHive, String)>,
+    replace_applying: bool,
     pub dialog: Option<EditorDialog>,
     pub message: Option<Message>,
     loaded: bool,
@@ -115,6 +116,7 @@ impl EditorState {
             replace_find_used: None,
             replace_with_used: None,
             replace_scope_used: None,
+            replace_applying: false,
             dialog: None,
             message: None,
             loaded: false,
@@ -135,7 +137,7 @@ impl EditorState {
     }
 
     pub fn set_hive(&mut self, hive: EditorHive) {
-        if self.hive == hive {
+        if self.hive == hive || self.replace_applying {
             return;
         }
         self.abort_search();
@@ -357,9 +359,16 @@ impl EditorState {
     }
 
     pub fn close_replace(&mut self) {
+        if self.replace_applying {
+            return;
+        }
         self.replace_open = false;
         self.clear_replace_results();
         self.abort_replace();
+    }
+
+    pub fn is_replace_applying(&self) -> bool {
+        self.replace_applying
     }
 
     pub fn clear_replace_results(&mut self) {
@@ -381,6 +390,9 @@ impl EditorState {
     }
 
     pub fn find_replacements(&mut self) {
+        if self.replace_applying {
+            return;
+        }
         let find = self.replace_find.trim().to_owned();
         if find.is_empty() {
             self.replace_hits = None;
@@ -448,6 +460,7 @@ impl EditorState {
             text: "Замена значений…".to_owned(),
             is_error: false,
         });
+        self.replace_applying = true;
         self.replace_job = Some(Job::spawn(
             "chipclean-registry-replace",
             move |_cancel, tx| {
@@ -484,26 +497,29 @@ impl EditorState {
                         });
                     }
                 },
-                ReplaceEvent::Replaced(result) => match result {
-                    Ok(report) => {
-                        self.replace_hits = None;
-                        self.replace_ack = false;
-                        self.replace_message = Some(Message {
-                            text: format!(
-                                "Заменено значений: {}. Бэкапов: {}.",
-                                report.replaced, report.backups
-                            ),
-                            is_error: false,
-                        });
-                        self.load_values();
+                ReplaceEvent::Replaced(result) => {
+                    self.replace_applying = false;
+                    match result {
+                        Ok(report) => {
+                            self.replace_hits = None;
+                            self.replace_ack = false;
+                            self.replace_message = Some(Message {
+                                text: format!(
+                                    "Заменено значений: {}. Бэкапов: {}.",
+                                    report.replaced, report.backups
+                                ),
+                                is_error: false,
+                            });
+                            self.load_values();
+                        }
+                        Err(err) => {
+                            self.replace_message = Some(Message {
+                                text: err,
+                                is_error: true,
+                            });
+                        }
                     }
-                    Err(err) => {
-                        self.replace_message = Some(Message {
-                            text: err,
-                            is_error: true,
-                        });
-                    }
-                },
+                }
             }
         }
 
@@ -513,6 +529,7 @@ impl EditorState {
         if let Some(mut job) = self.replace_job.take() {
             job.finish();
         }
+        self.replace_applying = false;
         if !finished {
             self.replace_message = Some(Message {
                 text: "Операция прервана: поток завершился неожиданно.".to_owned(),
@@ -522,6 +539,9 @@ impl EditorState {
     }
 
     fn abort_replace(&mut self) {
+        if self.replace_applying {
+            return;
+        }
         if let Some(job) = self.replace_job.take() {
             job.cancel();
         }

@@ -635,6 +635,15 @@ fn replace_window(ctx: &egui::Context, state: &mut EditorState) {
                 }
             });
 
+            if state.is_replace_applying() {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new("Идёт замена значений; дождитесь завершения, окно нельзя закрыть.")
+                        .font(font(9.0))
+                        .color(WARNING),
+                );
+            }
+
             if let Some(message) = &state.replace_message {
                 ui.add_space(6.0);
                 ui.label(
@@ -724,7 +733,7 @@ fn replace_window(ctx: &egui::Context, state: &mut EditorState) {
                 });
             }
         });
-    if !open {
+    if !open && !state.is_replace_applying() {
         state.close_replace();
     }
 }
