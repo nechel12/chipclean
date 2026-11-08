@@ -3,6 +3,7 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -91,6 +92,7 @@ pub struct SnapshotDiff {
     pub removed_values: Vec<ValueDiff>,
     pub changed_values: Vec<ValueDiff>,
     pub truncated: bool,
+    pub lists_truncated: bool,
 }
 
 impl SnapshotDiff {
@@ -169,7 +171,11 @@ fn snapshot_path(meta: &SnapshotMeta) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub fn create_snapshot(name: &str, roots: &[SnapshotRoot]) -> Result<SnapshotMeta> {
+pub fn create_snapshot(
+    name: &str,
+    roots: &[SnapshotRoot],
+    cancel: &AtomicBool,
+) -> Result<SnapshotMeta> {
     if roots.is_empty() {
         bail!("Выберите хотя бы один раздел");
     }
@@ -180,7 +186,7 @@ pub fn create_snapshot(name: &str, roots: &[SnapshotRoot]) -> Result<SnapshotMet
         name.to_owned()
     };
 
-    let data = capture(roots)?;
+    let data = capture(roots, cancel)?;
     let id = format!("snapshot-{}", Utc::now().format("%Y%m%d-%H%M%S-%3f"));
     let file = format!("{id}.json");
     let dir = config::snapshots_dir();
@@ -218,13 +224,13 @@ pub fn delete_snapshot(meta: &SnapshotMeta) -> Result<()> {
     save_index(&index)
 }
 
-pub fn compare(meta: &SnapshotMeta) -> Result<SnapshotDiff> {
+pub fn compare(meta: &SnapshotMeta, cancel: &AtomicBool) -> Result<SnapshotDiff> {
     let path = snapshot_path(meta)?;
     let raw =
         fs::read(&path).with_context(|| format!("не удалось прочитать {}", path.display()))?;
     let before: SnapshotData = serde_json::from_slice(&raw)
         .with_context(|| format!("не удалось разобрать {}", path.display()))?;
-    let after_data = capture(&meta.roots)?;
+    let after_data = capture(&meta.roots, cancel)?;
     let after_truncated = after_data.truncated;
 
     let before = key_map(before.entries);
@@ -285,12 +291,17 @@ pub fn compare(meta: &SnapshotMeta) -> Result<SnapshotDiff> {
         }
     }
 
+    diff.lists_truncated = diff.added_keys.len() >= DIFF_LIMIT
+        || diff.removed_keys.len() >= DIFF_LIMIT
+        || diff.added_values.len() >= DIFF_LIMIT
+        || diff.removed_values.len() >= DIFF_LIMIT
+        || diff.changed_values.len() >= DIFF_LIMIT;
     diff.added_keys.sort();
     diff.removed_keys.sort();
     Ok(diff)
 }
 
-fn capture(roots: &[SnapshotRoot]) -> Result<SnapshotData> {
+fn capture(roots: &[SnapshotRoot], cancel: &AtomicBool) -> Result<SnapshotData> {
     let mut entries = Vec::new();
     let mut total = 0_usize;
     let mut truncated = false;
@@ -301,6 +312,9 @@ fn capture(roots: &[SnapshotRoot]) -> Result<SnapshotData> {
         let mut queue = VecDeque::from([root_path.clone()]);
 
         while let Some(path) = queue.pop_front() {
+            if cancel.load(Ordering::Relaxed) {
+                bail!("Операция отменена");
+            }
             if total >= SNAPSHOT_KEY_LIMIT {
                 truncated = true;
                 break;
@@ -487,7 +501,7 @@ mod tests {
             path: path.clone(),
             label: "test".to_owned(),
         };
-        let data = capture(&[root]).unwrap();
+        let data = capture(&[root], &AtomicBool::new(false)).unwrap();
         assert!(!data.entries.is_empty());
         assert!(
             data.entries

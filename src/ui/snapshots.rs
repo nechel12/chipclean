@@ -112,6 +112,9 @@ fn create_card(ui: &mut Ui, state: &mut SnapshotState) {
                     ui.add_space(8.0);
                     ui.spinner();
                     ui.label(RichText::new(label).font(font(9.5)).color(TEXT_MUTED));
+                    if widgets::secondary_button(ui, "Отмена").clicked() {
+                        state.cancel();
+                    }
                 }
             });
             ui.add_space(8.0);
@@ -214,6 +217,10 @@ fn list_card(ui: &mut Ui, state: &mut SnapshotState) {
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     widgets::badge(ui, &state.snapshots.len().to_string(), TEXT_DIM);
+                    ui.add_space(8.0);
+                    if widgets::secondary_button(ui, "Сравнить").clicked() {
+                        state.compare();
+                    }
                 });
             });
             ui.add_space(8.0);
@@ -228,7 +235,6 @@ fn list_card(ui: &mut Ui, state: &mut SnapshotState) {
             }
 
             let mut select = None;
-            let mut compare = false;
             let mut delete = None;
             let interactive = !state.is_busy();
             let snapshots = state.snapshots.clone();
@@ -239,7 +245,6 @@ fn list_card(ui: &mut Ui, state: &mut SnapshotState) {
                     delete = Some(meta.clone());
                 } else if interactive && clicked {
                     select = Some(meta.id.clone());
-                    compare = true;
                 }
                 ui.add_space(5.0);
             }
@@ -248,13 +253,8 @@ fn list_card(ui: &mut Ui, state: &mut SnapshotState) {
                     state.selected = Some(meta.id);
                     state.request_delete();
                 }
-            } else {
-                if let Some(id) = select {
-                    state.select(id);
-                }
-                if compare {
-                    state.compare();
-                }
+            } else if let Some(id) = select {
+                state.select(id);
             }
         });
 }
@@ -411,6 +411,14 @@ fn diff_card(ui: &mut Ui, state: &mut SnapshotState) {
                 ui.add_space(6.0);
                 ui.label(
                     RichText::new("Снимок или сравнение обрезаны лимитом.")
+                        .font(font(9.0))
+                        .color(WARNING),
+                );
+            }
+            if diff.lists_truncated {
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new("Списки изменений сокращены до 5000 в категории.")
                         .font(font(9.0))
                         .color(WARNING),
                 );

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::core::{
     job::{self, Job},
@@ -31,6 +31,7 @@ pub struct SnapshotState {
     pub selected_roots: HashSet<String>,
     pub name: String,
     pub snapshots: Vec<SnapshotMeta>,
+    sizes: HashMap<String, u64>,
     pub selected: Option<String>,
     pub diff: Option<SnapshotDiff>,
     pub pending_delete: Option<SnapshotMeta>,
@@ -55,6 +56,7 @@ impl SnapshotState {
             selected_roots,
             name: String::new(),
             snapshots: Vec::new(),
+            sizes: HashMap::new(),
             selected: None,
             diff: None,
             pending_delete: None,
@@ -84,6 +86,16 @@ impl SnapshotState {
                     self.selected = None;
                 }
                 self.snapshots = snapshots;
+                self.sizes = self
+                    .snapshots
+                    .iter()
+                    .map(|meta| {
+                        (
+                            meta.id.clone(),
+                            registry_snapshots::snapshot_size(meta).unwrap_or(0),
+                        )
+                    })
+                    .collect();
             }
             Err(err) => self.set_error(err.to_string()),
         }
@@ -184,12 +196,18 @@ impl SnapshotState {
         self.busy = Some(Busy::Create);
         self.job = Some(Job::spawn(
             "chipclean-snapshot-create",
-            move |_cancel, tx| {
-                let result = registry_snapshots::create_snapshot(&name, &roots)
+            move |cancel, tx| {
+                let result = registry_snapshots::create_snapshot(&name, &roots, &cancel)
                     .map_err(|err| err.to_string());
                 let _ = tx.send(Event::Created(result));
             },
         ));
+    }
+
+    pub fn cancel(&mut self) {
+        if let Some(job) = &self.job {
+            job.cancel();
+        }
     }
 
     pub fn is_busy(&self) -> bool {
@@ -265,8 +283,9 @@ impl SnapshotState {
         self.busy = Some(Busy::Compare);
         self.job = Some(Job::spawn(
             "chipclean-snapshot-compare",
-            move |_cancel, tx| {
-                let result = registry_snapshots::compare(&meta).map_err(|err| err.to_string());
+            move |cancel, tx| {
+                let result =
+                    registry_snapshots::compare(&meta, &cancel).map_err(|err| err.to_string());
                 let _ = tx.send(Event::Compared(result));
             },
         ));
@@ -331,7 +350,7 @@ impl SnapshotState {
     }
 
     pub fn snapshot_size(&self, meta: &SnapshotMeta) -> u64 {
-        registry_snapshots::snapshot_size(meta).unwrap_or(0)
+        self.sizes.get(&meta.id).copied().unwrap_or(0)
     }
 
     fn set_ok(&mut self, text: String) {
