@@ -7,9 +7,7 @@ use serde::Deserialize;
 use crate::{
     app::Page,
     core::{
-        privacy_state::PrivacyState,
-        startup_state::StartupState,
-        state::CleanupState,
+        privacy_state::PrivacyState, startup_state::StartupState, state::CleanupState,
         tweaks_state::TweaksState,
     },
     i18n::t,
@@ -81,11 +79,7 @@ fn background_summary_card(ui: &mut Ui, summary: &LastBackground) {
                             summary.ts.replace('T', " ").trim_end_matches('Z'),
                         )
                     };
-                    ui.label(
-                        RichText::new(detail)
-                            .font(font(9.5))
-                            .color(TEXT_MUTED),
-                    );
+                    ui.label(RichText::new(detail).font(font(9.5)).color(TEXT_MUTED));
                 });
             });
         });
@@ -128,11 +122,9 @@ pub fn show(
                     .color(TEXT),
             );
             ui.label(
-                RichText::new(
-                    "Одной кнопкой: скан системы, личные данные, автозагрузка и твики.",
-                )
-                .font(font(10.0))
-                .color(TEXT_MUTED),
+                RichText::new("Одной кнопкой: скан системы, личные данные, автозагрузка и твики.")
+                    .font(font(10.0))
+                    .color(TEXT_MUTED),
             );
         });
     });
@@ -178,7 +170,9 @@ fn card_cleanup(ui: &mut Ui, cleanup: &CleanupState) -> bool {
     let (bytes, files) = cleanup
         .results
         .values()
-        .fold((0u64, 0u64), |(b, f), outcome| (b + outcome.bytes, f + outcome.files));
+        .fold((0u64, 0u64), |(b, f), outcome| {
+            (b + outcome.bytes, f + outcome.files)
+        });
     let status = if cleanup.is_cleaning() {
         "Идёт очистка…"
     } else if cleanup.is_scanning() {
@@ -238,9 +232,7 @@ fn card_startup(ui: &mut Ui, startup: &StartupState) -> bool {
         ui,
         ph::ROCKET_LAUNCH,
         "Автозагрузка",
-        &format!(
-            "Записей: {run} · Задач: {tasks} · Служб: {services} (всего {total})"
-        ),
+        &format!("Записей: {run} · Задач: {tasks} · Служб: {services} (всего {total})"),
         status,
         0,
         0,
@@ -303,17 +295,9 @@ fn summary_card(
                 );
                 ui.add_space(12.0);
                 ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new(title)
-                            .font(font_semibold(13.5))
-                            .color(TEXT),
-                    );
+                    ui.label(RichText::new(title).font(font_semibold(13.5)).color(TEXT));
                     ui.add_space(2.0);
-                    ui.label(
-                        RichText::new(detail)
-                            .font(font(10.0))
-                            .color(TEXT_MUTED),
-                    );
+                    ui.label(RichText::new(detail).font(font(10.0)).color(TEXT_MUTED));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.vertical(|ui| {

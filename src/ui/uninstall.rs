@@ -477,7 +477,8 @@ fn program_row(ui: &mut Ui, entry: &ProgramEntry, index: usize) -> bool {
     button_response.clicked() && enabled
 }
 
-fn empty_card(ui: &mut Ui, text: &str) {    Frame::new()
+fn empty_card(ui: &mut Ui, text: &str) {
+    Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
         .corner_radius(CornerRadius::same(12))

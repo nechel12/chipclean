@@ -90,7 +90,8 @@ pub struct RollbackState {
 
 impl RollbackState {
     pub fn create_restore_point(&mut self) {
-        match crate::core::restore_point::create("ChipClean: перед операциями отката") {
+        match crate::core::restore_point::create("ChipClean: перед операциями отката")
+        {
             Ok(()) => {
                 self.message = Some(Message {
                     text: "Точка восстановления Windows создана.".to_owned(),

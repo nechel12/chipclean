@@ -760,8 +760,9 @@ fn export_key_to(
 ) -> Result<PathBuf> {
     let full = format!("{}\\{}", hive.reg_name(), key_path);
     let path = dir.join(filename);
-    let text = crate::core::registry_export::export_key_text(hive.root(), hive.reg_name(), key_path)
-        .with_context(|| format!("не удалось сформировать экспорт для {full}"))?;
+    let text =
+        crate::core::registry_export::export_key_text(hive.root(), hive.reg_name(), key_path)
+            .with_context(|| format!("не удалось сформировать экспорт для {full}"))?;
     fs::write(&path, text)
         .with_context(|| format!("не удалось записать экспорт в {}", path.display()))?;
     Ok(path)

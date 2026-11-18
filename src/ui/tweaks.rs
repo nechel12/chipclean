@@ -292,9 +292,7 @@ fn edit_panel(ui: &mut Ui, state: &mut TweaksState, index: usize) {
                 let cancel = ui
                     .add(
                         egui::Button::new(
-                            RichText::new("Отмена")
-                                .font(font(11.0))
-                                .color(TEXT_MUTED),
+                            RichText::new("Отмена").font(font(11.0)).color(TEXT_MUTED),
                         )
                         .corner_radius(7),
                     )
@@ -354,11 +352,7 @@ fn error_banner(ui: &mut Ui, error: &str) {
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::same(12))
         .show(ui, |ui| {
-            ui.label(
-                RichText::new(error)
-                    .font(font(11.5))
-                    .color(ERROR_TEXT),
-            );
+            ui.label(RichText::new(error).font(font(11.5)).color(ERROR_TEXT));
         });
 }
 
@@ -369,10 +363,6 @@ fn summary_banner(ui: &mut Ui, summary: &str) {
         .corner_radius(CornerRadius::same(10))
         .inner_margin(Margin::same(12))
         .show(ui, |ui| {
-            ui.label(
-                RichText::new(summary)
-                    .font(font(11.5))
-                    .color(TEXT),
-            );
+            ui.label(RichText::new(summary).font(font(11.5)).color(TEXT));
         });
 }

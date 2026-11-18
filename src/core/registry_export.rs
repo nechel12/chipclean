@@ -84,7 +84,10 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 fn wide_to_string(value: &Value) -> String {
     let wide = value.as_wide();
-    let end = wide.iter().position(|&unit| unit == 0).unwrap_or(wide.len());
+    let end = wide
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(wide.len());
     String::from_utf16_lossy(&wide[..end])
 }
 

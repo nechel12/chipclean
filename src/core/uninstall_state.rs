@@ -234,7 +234,11 @@ impl UninstallState {
     }
 
     pub fn request_clean_traces(&mut self) {
-        if self.tracked_results.as_ref().is_some_and(|items| !items.is_empty()) {
+        if self
+            .tracked_results
+            .as_ref()
+            .is_some_and(|items| !items.is_empty())
+        {
             self.tracked_pending_clean = true;
         }
     }

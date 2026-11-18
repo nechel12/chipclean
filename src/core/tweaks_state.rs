@@ -72,7 +72,10 @@ impl TweaksState {
     }
 
     pub fn pending_count(&self) -> usize {
-        self.entries.iter().filter(|entry| entry.pending.is_some()).count()
+        self.entries
+            .iter()
+            .filter(|entry| entry.pending.is_some())
+            .count()
     }
 
     pub fn discard_changes(&mut self) {
@@ -87,10 +90,7 @@ impl TweaksState {
     pub fn begin_edit(&mut self, index: usize) {
         if self.entries.get(index).is_some() {
             self.editing = Some(index);
-            self.edit_buffer = self.entries[index]
-                .current_raw
-                .clone()
-                .unwrap_or_default();
+            self.edit_buffer = self.entries[index].current_raw.clone().unwrap_or_default();
         }
     }
 

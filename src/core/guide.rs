@@ -35,13 +35,34 @@ fn guide_html(lang: Lang) -> String {
             "ChipClean — Руководство",
             "ChipClean — сканер и безопасная очистка Windows, вдохновлённая Reg Organizer. Всё работает локально.",
             vec![
-                ("Очистка системы", "Временные файлы, кэши, логи, отчёты об ошибках, обновления Windows, корзина, загрузки."),
-                ("Реестр", "Безопасная проверка, редактор с поиском и заменой, импорт .reg с предпросмотром, снимки и откат."),
-                ("Автозагрузка", "Run/RunOnce, папки автозагрузки, задачи планировщика, службы — отключение с карантином."),
-                ("Личные данные", "История браузеров, недавние документы и списки файлов."),
-                ("Чистка сообществом", "Правила winapp2.ini с обновлением базы из интернета."),
-                ("Твики", "Скрытые настройки Windows по образцу Reg Organizer; перед изменением — резервная копия .reg."),
-                ("Фоновая очистка", "Ежедневная задача и проверка при входе через Планировщик заданий."),
+                (
+                    "Очистка системы",
+                    "Временные файлы, кэши, логи, отчёты об ошибках, обновления Windows, корзина, загрузки.",
+                ),
+                (
+                    "Реестр",
+                    "Безопасная проверка, редактор с поиском и заменой, импорт .reg с предпросмотром, снимки и откат.",
+                ),
+                (
+                    "Автозагрузка",
+                    "Run/RunOnce, папки автозагрузки, задачи планировщика, службы — отключение с карантином.",
+                ),
+                (
+                    "Личные данные",
+                    "История браузеров, недавние документы и списки файлов.",
+                ),
+                (
+                    "Чистка сообществом",
+                    "Правила winapp2.ini с обновлением базы из интернета.",
+                ),
+                (
+                    "Твики",
+                    "Скрытые настройки Windows по образцу Reg Organizer; перед изменением — резервная копия .reg.",
+                ),
+                (
+                    "Фоновая очистка",
+                    "Ежедневная задача и проверка при входе через Планировщик заданий.",
+                ),
                 ("Экспресс-проверка", "Один запуск всех сканов."),
                 ("Анализ диска", "Крупнейшие файлы и занятость тома."),
             ],
@@ -61,13 +82,34 @@ fn guide_html(lang: Lang) -> String {
             "ChipClean — User Guide",
             "ChipClean — a scanner and safe Windows cleaner inspired by Reg Organizer. Everything runs locally.",
             vec![
-                ("System Cleanup", "Temporary files, caches, logs, error reports, Windows updates, Recycle Bin, downloads."),
-                ("Registry", "Safe check, editor with search and replace, .reg import with preview, snapshots and rollback."),
-                ("Startup", "Run/RunOnce, startup folders, Task Scheduler tasks, services — disable with quarantine."),
-                ("Privacy", "Browser history, recent documents and file lists."),
-                ("Community Cleanup", "winapp2.ini rules with online database updates."),
-                ("Tweaks", "Hidden Windows settings following Reg Organizer; .reg backup before each change."),
-                ("Background Cleanup", "Daily task and logon check via Task Scheduler."),
+                (
+                    "System Cleanup",
+                    "Temporary files, caches, logs, error reports, Windows updates, Recycle Bin, downloads.",
+                ),
+                (
+                    "Registry",
+                    "Safe check, editor with search and replace, .reg import with preview, snapshots and rollback.",
+                ),
+                (
+                    "Startup",
+                    "Run/RunOnce, startup folders, Task Scheduler tasks, services — disable with quarantine.",
+                ),
+                (
+                    "Privacy",
+                    "Browser history, recent documents and file lists.",
+                ),
+                (
+                    "Community Cleanup",
+                    "winapp2.ini rules with online database updates.",
+                ),
+                (
+                    "Tweaks",
+                    "Hidden Windows settings following Reg Organizer; .reg backup before each change.",
+                ),
+                (
+                    "Background Cleanup",
+                    "Daily task and logon check via Task Scheduler.",
+                ),
                 ("Express Check", "Run all scans with one button."),
                 ("Disk Analysis", "Largest files and volume usage."),
             ],
@@ -106,7 +148,11 @@ code{background:#f0f0f0;padding:1px 5px;border-radius:4px}",
     html.push_str(&format!("<p>{intro}</p>"));
 
     html.push_str("<h2>");
-    html.push_str(if lang == Lang::Ru { "Возможности" } else { "Features" });
+    html.push_str(if lang == Lang::Ru {
+        "Возможности"
+    } else {
+        "Features"
+    });
     html.push_str("</h2>");
     for (name, desc) in sections {
         html.push_str(&format!(
@@ -127,7 +173,11 @@ code{background:#f0f0f0;padding:1px 5px;border-radius:4px}",
     html.push_str("</ul>");
 
     html.push_str("<h2>");
-    html.push_str(if lang == Lang::Ru { "Лицензия" } else { "License" });
+    html.push_str(if lang == Lang::Ru {
+        "Лицензия"
+    } else {
+        "License"
+    });
     html.push_str("</h2><ul>");
     for line in license {
         html.push_str(&format!("<li>{line}</li>"));

@@ -15,7 +15,8 @@ use crate::config;
 use crate::core::{fs_atomic, journal::Journal};
 
 /// Официальный источник актуальной базы правил.
-pub const WINAPP2_URL: &str = "https://raw.githubusercontent.com/MoscaDotTo/Winapp2/master/Winapp2.ini";
+pub const WINAPP2_URL: &str =
+    "https://raw.githubusercontent.com/MoscaDotTo/Winapp2/master/Winapp2.ini";
 
 /// Верхняя граница размера базы (защита от аномального ответа).
 pub const MAX_BYTES: usize = 20 * 1024 * 1024;

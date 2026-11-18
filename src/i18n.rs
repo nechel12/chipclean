@@ -178,33 +178,71 @@ impl Page {
 
     pub fn subtitle(self) -> &'static str {
         match (current(), self) {
-            (Lang::Ru, Page::Cleanup) => "Сканирование, предпросмотр и безопасное удаление с подтверждением.",
+            (Lang::Ru, Page::Cleanup) => {
+                "Сканирование, предпросмотр и безопасное удаление с подтверждением."
+            }
             (Lang::En, Page::Cleanup) => "Scan, preview and safely delete with confirmation.",
-            (Lang::Ru, Page::Registry) => "Безопасная проверка реестра и обязательный .reg-бэкап перед изменениями.",
-            (Lang::En, Page::Registry) => "Safe registry check with a mandatory .reg backup before changes.",
-            (Lang::Ru, Page::RegistryEditor) => "Просмотр, поиск и изменение реестра с .reg-бэкапами.",
-            (Lang::En, Page::RegistryEditor) => "Browse, search and edit the registry with .reg backups.",
+            (Lang::Ru, Page::Registry) => {
+                "Безопасная проверка реестра и обязательный .reg-бэкап перед изменениями."
+            }
+            (Lang::En, Page::Registry) => {
+                "Safe registry check with a mandatory .reg backup before changes."
+            }
+            (Lang::Ru, Page::RegistryEditor) => {
+                "Просмотр, поиск и изменение реестра с .reg-бэкапами."
+            }
+            (Lang::En, Page::RegistryEditor) => {
+                "Browse, search and edit the registry with .reg backups."
+            }
             (Lang::Ru, Page::Snapshots) => "Создание снимков и сравнение изменений реестра.",
             (Lang::En, Page::Snapshots) => "Create snapshots and compare registry changes.",
-            (Lang::Ru, Page::Rollback) => "Восстановление реестра, карантина следов и отключённой автозагрузки.",
-            (Lang::En, Page::Rollback) => "Restore registry, quarantined traces and disabled startup items.",
+            (Lang::Ru, Page::Rollback) => {
+                "Восстановление реестра, карантина следов и отключённой автозагрузки."
+            }
+            (Lang::En, Page::Rollback) => {
+                "Restore registry, quarantined traces and disabled startup items."
+            }
             (Lang::Ru, Page::Privacy) => "История браузеров, списки файлов и недавние документы.",
             (Lang::En, Page::Privacy) => "Browser history, file lists and recent documents.",
             (Lang::Ru, Page::Community) => "Правила очистки из открытой базы winapp2.ini.",
             (Lang::En, Page::Community) => "Cleanup rules from the open winapp2.ini database.",
-            (Lang::Ru, Page::Express) => "Скан всех групп одной кнопкой: система, личные данные, автозагрузка, твики.",
-            (Lang::En, Page::Express) => "Scan all groups with one button: system, privacy, startup, tweaks.",
-            (Lang::Ru, Page::DiskAnalysis) => "Поиск крупнейших файлов и оценка занятого места на выбранном томе.",
-            (Lang::En, Page::DiskAnalysis) => "Find largest files and estimate disk usage on a selected volume.",
-            (Lang::Ru, Page::Startup) => "Run/RunOnce, папки «Автозагрузка», планировщик задач и службы.",
-            (Lang::En, Page::Startup) => "Run/RunOnce, startup folders, Task Scheduler and services.",
+            (Lang::Ru, Page::Express) => {
+                "Скан всех групп одной кнопкой: система, личные данные, автозагрузка, твики."
+            }
+            (Lang::En, Page::Express) => {
+                "Scan all groups with one button: system, privacy, startup, tweaks."
+            }
+            (Lang::Ru, Page::DiskAnalysis) => {
+                "Поиск крупнейших файлов и оценка занятого места на выбранном томе."
+            }
+            (Lang::En, Page::DiskAnalysis) => {
+                "Find largest files and estimate disk usage on a selected volume."
+            }
+            (Lang::Ru, Page::Startup) => {
+                "Run/RunOnce, папки «Автозагрузка», планировщик задач и службы."
+            }
+            (Lang::En, Page::Startup) => {
+                "Run/RunOnce, startup folders, Task Scheduler and services."
+            }
             (Lang::Ru, Page::Traces) => "Битые ярлыки и следы программ: карантин или удаление.",
-            (Lang::En, Page::Traces) => "Broken shortcuts and program traces: quarantine or delete.",
-            (Lang::Ru, Page::Tweaks) => "Скрытые настройки Windows: включение/отключение по образцу Reg Organizer.",
-            (Lang::En, Page::Tweaks) => "Hidden Windows settings: enable/disable following Reg Organizer.",
-            (Lang::Ru, Page::Programs) => "Установленные программы и запуск их штатных деинсталляторов.",
-            (Lang::En, Page::Programs) => "Installed programs and running their official uninstallers.",
-            (Lang::Ru, Page::Settings) => "Правила очистки, расположение журналов и сведения о сборке.",
+            (Lang::En, Page::Traces) => {
+                "Broken shortcuts and program traces: quarantine or delete."
+            }
+            (Lang::Ru, Page::Tweaks) => {
+                "Скрытые настройки Windows: включение/отключение по образцу Reg Organizer."
+            }
+            (Lang::En, Page::Tweaks) => {
+                "Hidden Windows settings: enable/disable following Reg Organizer."
+            }
+            (Lang::Ru, Page::Programs) => {
+                "Установленные программы и запуск их штатных деинсталляторов."
+            }
+            (Lang::En, Page::Programs) => {
+                "Installed programs and running their official uninstallers."
+            }
+            (Lang::Ru, Page::Settings) => {
+                "Правила очистки, расположение журналов и сведения о сборке."
+            }
             (Lang::En, Page::Settings) => "Cleanup rules, log locations and build information.",
             (Lang::Ru, Page::Help) => "Краткое описание возможностей и гарантий безопасности.",
             (Lang::En, Page::Help) => "Overview of features and safety guarantees.",

@@ -55,7 +55,11 @@ fn collect(
 
 /// Возвращает ключи из снимка, которые исчезли (были удалены).
 pub fn diff_removed(before: &[RegistrySnapshotEntry]) -> Vec<RegistrySnapshotEntry> {
-    before.iter().filter(|entry| !entry_exists(entry)).cloned().collect()
+    before
+        .iter()
+        .filter(|entry| !entry_exists(entry))
+        .cloned()
+        .collect()
 }
 
 fn entry_exists(entry: &RegistrySnapshotEntry) -> bool {

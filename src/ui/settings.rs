@@ -65,7 +65,8 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             );
         });
 
-        card(&mut columns[1], "Профиль очистки", |ui| {            let profile = crate::win::profile::current();
+        card(&mut columns[1], "Профиль очистки", |ui| {
+            let profile = crate::win::profile::current();
             ui.label(
                 RichText::new("Пользователь")
                     .font(font(9.5))
@@ -206,7 +207,8 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
         });
     });
 
-    card(ui, "Фоновая очистка", |ui| {        ui.label(
+    card(ui, "Фоновая очистка", |ui| {
+        ui.label(
             RichText::new(
                 "Ежедневный запуск безопасных правил очистки через Планировщик заданий Windows.",
             )
@@ -222,7 +224,11 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("При входе в систему").font(font(11.0)).color(TEXT));
+            ui.label(
+                RichText::new("При входе в систему")
+                    .font(font(11.0))
+                    .color(TEXT),
+            );
             ui.checkbox(&mut settings.startup_check_enabled, "");
         });
 
@@ -246,14 +252,22 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
         let startup_registered = crate::core::schedule::is_startup_check_registered();
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(if registered { "Задача создана" } else { "Задача не создана" })
-                    .font(font(9.5))
-                    .color(TEXT_DIM),
+                RichText::new(if registered {
+                    "Задача создана"
+                } else {
+                    "Задача не создана"
+                })
+                .font(font(9.5))
+                .color(TEXT_DIM),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 widgets::badge(
                     ui,
-                    if registered { "Активна" } else { "Выключена" },
+                    if registered {
+                        "Активна"
+                    } else {
+                        "Выключена"
+                    },
                     if registered { SUCCESS } else { TEXT_DIM },
                 );
             });
@@ -277,7 +291,11 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
                     } else {
                         "Выключена"
                     },
-                    if startup_registered { SUCCESS } else { TEXT_DIM },
+                    if startup_registered {
+                        SUCCESS
+                    } else {
+                        TEXT_DIM
+                    },
                 );
             });
         });
@@ -320,7 +338,11 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 widgets::badge(
                     ui,
-                    if registered { "Установлено" } else { "Не установлено" },
+                    if registered {
+                        "Установлено"
+                    } else {
+                        "Не установлено"
+                    },
                     if registered { SUCCESS } else { TEXT_DIM },
                 );
             });

@@ -1,4 +1,7 @@
-use egui::{Align2, Color32, CornerRadius, FontFamily, FontId, Frame, Margin, RichText, Sense, Stroke, Ui, Vec2};
+use egui::{
+    Align2, Color32, CornerRadius, FontFamily, FontId, Frame, Margin, RichText, Sense, Stroke, Ui,
+    Vec2,
+};
 use egui_phosphor::regular as ph;
 
 use crate::{
@@ -21,11 +24,7 @@ pub fn show(ui: &mut Ui, state: &mut DiskAnalysisState) {
             .corner_radius(CornerRadius::same(10))
             .inner_margin(Margin::same(12))
             .show(ui, |ui| {
-                ui.label(
-                    RichText::new(error)
-                        .font(font(11.0))
-                        .color(ERROR_TEXT),
-                );
+                ui.label(RichText::new(error).font(font(11.0)).color(ERROR_TEXT));
             });
     }
 
@@ -80,9 +79,7 @@ fn toolbar(ui: &mut Ui, state: &mut DiskAnalysisState) {
                 if ui
                     .add(
                         egui::Button::new(
-                            RichText::new("Отмена")
-                                .font(font(11.5))
-                                .color(TEXT_MUTED),
+                            RichText::new("Отмена").font(font(11.5)).color(TEXT_MUTED),
                         )
                         .corner_radius(8),
                     )

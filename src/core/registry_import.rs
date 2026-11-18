@@ -278,8 +278,12 @@ fn truncate(text: &str, max: usize) -> String {
     value
 }
 
-fn parse_dword(text: &str) -> Result<u32> {    let text = text.trim();
-    if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("dword:")) {
+fn parse_dword(text: &str) -> Result<u32> {
+    let text = text.trim();
+    if let Some(hex) = text
+        .strip_prefix("0x")
+        .or_else(|| text.strip_prefix("dword:"))
+    {
         return u32::from_str_radix(hex, 16).context("неверный hex-DWORD");
     }
     text.parse::<u32>().context("неверный DWORD")

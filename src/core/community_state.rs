@@ -6,8 +6,7 @@ use std::{
 use crate::{
     config,
     core::{
-        community,
-        community_update,
+        community, community_update,
         job::{self, Job},
         privacy::{self, CleanReport, DataTarget, TargetScan},
     },

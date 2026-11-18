@@ -309,8 +309,8 @@ impl eframe::App for ChipCleanApp {
             self.toast("Не удалось обновить задачу фоновой очистки");
         }
 
-        let startup_check_changed = self.settings.startup_check_enabled
-            != settings_before.startup_check_enabled;
+        let startup_check_changed =
+            self.settings.startup_check_enabled != settings_before.startup_check_enabled;
         if startup_check_changed
             && let Err(err) = crate::core::schedule::apply_startup_check_enabled(
                 self.settings.startup_check_enabled,

@@ -1,4 +1,4 @@
-﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod config;
@@ -11,10 +11,7 @@ mod win;
 use anyhow::{Context, Result};
 use crossbeam_channel::unbounded;
 use single_instance::SingleInstance;
-use std::sync::{
-    Arc,
-    atomic::AtomicBool,
-};
+use std::sync::{Arc, atomic::AtomicBool};
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {
@@ -115,10 +112,7 @@ fn run_background_cleanup() -> Result<()> {
         .filter(|category| category.default_enabled)
         .collect();
 
-    tracing::info!(
-        categories = categories.len(),
-        "background cleanup start"
-    );
+    tracing::info!(categories = categories.len(), "background cleanup start");
 
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = unbounded();
@@ -156,10 +150,8 @@ fn run_background_cleanup() -> Result<()> {
                     "cancelled": cancelled,
                     "elapsed_ms": elapsed.as_millis(),
                 });
-                let _ = core::fs_atomic::write_json_atomic(
-                    &config::background_result_path(),
-                    &summary,
-                );
+                let _ =
+                    core::fs_atomic::write_json_atomic(&config::background_result_path(), &summary);
                 if cancelled {
                     anyhow::bail!("фоновая очистка была отменена");
                 }
@@ -172,10 +164,8 @@ fn run_background_cleanup() -> Result<()> {
                     "event": "background_failed",
                     "message": message,
                 });
-                let _ = core::fs_atomic::write_json_atomic(
-                    &config::background_result_path(),
-                    &summary,
-                );
+                let _ =
+                    core::fs_atomic::write_json_atomic(&config::background_result_path(), &summary);
                 anyhow::bail!("фоновая очистка не удалась: {message}");
             }
             _ => {}

@@ -165,7 +165,12 @@ fn value_matches(raw: &str, expected: &TweakValue) -> bool {
 
 /// Для фиксированных твиков: включён ли он сейчас (None — значение не распознано).
 pub fn current_enabled(info: &TweakInfo) -> Result<Option<bool>> {
-    let TweakKind::Fixed { on_value, off_value, .. } = info.kind else {
+    let TweakKind::Fixed {
+        on_value,
+        off_value,
+        ..
+    } = info.kind
+    else {
         return Ok(None);
     };
     let Some(raw) = read_raw(info)? else {
@@ -189,7 +194,12 @@ pub struct TweakApplyOutcome {
 
 /// Применяет твик: включая/выключая его.
 pub fn apply(info: &TweakInfo, enable: bool) -> Result<TweakApplyOutcome> {
-    let TweakKind::Fixed { on_value, off_value, .. } = info.kind else {
+    let TweakKind::Fixed {
+        on_value,
+        off_value,
+        ..
+    } = info.kind
+    else {
         return Ok(TweakApplyOutcome {
             requires_logoff: info.need_logoff,
             requires_reboot: info.need_reboot,
@@ -272,7 +282,12 @@ pub fn apply_value(info: &TweakInfo, value: &str) -> Result<TweakApplyOutcome> {
     let previous = read_raw(info)?;
     backup_reg(info, previous.as_deref())?;
     write_target(info, &target)?;
-    record_journal(info, "tweak_value_applied", previous.as_deref(), Some(&target))?;
+    record_journal(
+        info,
+        "tweak_value_applied",
+        previous.as_deref(),
+        Some(&target),
+    )?;
 
     Ok(TweakApplyOutcome {
         requires_logoff: info.need_logoff,
@@ -312,7 +327,10 @@ fn write_target(info: &TweakInfo, target: &AppliedValue) -> Result<()> {
 
 fn parse_dword(value: &str) -> Result<u32> {
     let value = value.trim();
-    if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         return u32::from_str_radix(hex, 16).context("неверное шестнадцатеричное DWORD-значение");
     }
     value.parse::<u32>().context("неверное DWORD-значение")
@@ -341,8 +359,7 @@ fn record_journal(
 /// Создаёт резервную копию текущего значения в `.reg` формате.
 fn backup_reg(info: &TweakInfo, previous: Option<&str>) -> Result<PathBuf> {
     let dir = config::backups_dir().join("tweaks");
-    fs::create_dir_all(&dir)
-        .with_context(|| format!("не удалось создать {}", dir.display()))?;
+    fs::create_dir_all(&dir).with_context(|| format!("не удалось создать {}", dir.display()))?;
 
     let id = info.id.trim_matches(|c| c == '{' || c == '}');
     let stamp = Utc::now().format("%Y%m%d-%H%M%S-%3f");
@@ -359,7 +376,10 @@ fn backup_reg(info: &TweakInfo, previous: Option<&str>) -> Result<PathBuf> {
     if let Some(previous) = previous {
         if info.value_type == ValueType::Dword {
             let number = parse_dword(previous).unwrap_or(0);
-            text.push_str(&format!("\"{}\"=dword:{number:08x}\r\n", escape_reg_name(name)));
+            text.push_str(&format!(
+                "\"{}\"=dword:{number:08x}\r\n",
+                escape_reg_name(name)
+            ));
         } else {
             text.push_str(&format!(
                 "\"{}\"=\"{}\"\r\n",
@@ -415,7 +435,11 @@ mod tests {
     fn values_are_consistent_with_types() {
         for tweak in all() {
             let values: [TweakValue; 2] = match tweak.kind {
-                TweakKind::Fixed { on_value, off_value, .. } => [on_value, off_value],
+                TweakKind::Fixed {
+                    on_value,
+                    off_value,
+                    ..
+                } => [on_value, off_value],
                 TweakKind::Floating { default_value, .. } => [default_value, TweakValue::Absent],
             };
             for value in values {
