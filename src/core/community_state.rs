@@ -7,6 +7,7 @@ use crate::{
     config,
     core::{
         community,
+        community_update,
         job::{self, Job},
         privacy::{self, CleanReport, DataTarget, TargetScan},
     },
@@ -62,12 +63,15 @@ pub struct CommunityState {
     pub risk_ack: bool,
     pub last_report: Option<CleanReport>,
     pub message: Option<Message>,
+    pub update_busy: bool,
+    pub update_result: Option<Message>,
     pending_ids: Vec<String>,
     loaded: bool,
     scan_job: Option<Job<ScanEvent>>,
     scan_progress: Option<Progress>,
     clean_job: Option<Job<CleanEvent>>,
     clean_progress: Option<Progress>,
+    update_job: Option<Job<Message>>,
 }
 
 impl CommunityState {
@@ -83,12 +87,15 @@ impl CommunityState {
             risk_ack: false,
             last_report: None,
             message: None,
+            update_busy: false,
+            update_result: None,
             pending_ids: Vec::new(),
             loaded: false,
             scan_job: None,
             scan_progress: None,
             clean_job: None,
             clean_progress: None,
+            update_job: None,
         }
     }
 
@@ -128,6 +135,53 @@ impl CommunityState {
                 self.set_message(err.to_string(), true);
             }
         }
+    }
+
+    /// Начинает скачивание свежей базы правил в фоновом потоке.
+    pub fn start_update(&mut self) {
+        if self.update_busy {
+            return;
+        }
+        self.update_busy = true;
+        self.update_result = None;
+        self.update_job = Some(Job::spawn("chipclean-community-update", |_cancel, tx| {
+            let result = match community_update::download_winapp2() {
+                Ok(outcome) => Message {
+                    text: format!("База обновлена: {} байт.", outcome.bytes),
+                    is_error: false,
+                },
+                Err(err) => Message {
+                    text: format!("Не удалось обновить базу: {err:#}"),
+                    is_error: true,
+                },
+            };
+            let _ = tx.send(result);
+        }));
+    }
+
+    /// Обрабатывает завершившееся скачивание базы.
+    pub fn poll_update(&mut self) {
+        let (events, disconnected) = job::drain(&self.update_job);
+        let mut finished = false;
+        for event in events {
+            self.update_result = Some(event);
+            finished = true;
+        }
+        if !finished && !disconnected {
+            return;
+        }
+        if let Some(mut job) = self.update_job.take() {
+            job.finish();
+        }
+        self.update_busy = false;
+        if !finished {
+            self.update_result = Some(Message {
+                text: "Скачивание базы прервано: поток завершился неожиданно.".to_owned(),
+                is_error: true,
+            });
+        }
+        // После обновления перечитываем базу, даже если файла не было.
+        self.load();
     }
 
     pub fn toggle(&mut self, id: &str) {
@@ -632,12 +686,15 @@ mod tests {
             risk_ack: false,
             last_report: None,
             message: None,
+            update_busy: false,
+            update_result: None,
             pending_ids: Vec::new(),
             loaded: true,
             scan_job: None,
             scan_progress: None,
             clean_job: None,
             clean_progress: None,
+            update_job: None,
         }
     }
 

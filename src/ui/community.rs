@@ -89,6 +89,11 @@ fn database_card(ui: &mut Ui, state: &mut CommunityState) {
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
+                        if state.update_busy {
+                            widgets::badge(ui, "Скачивание…", WARNING);
+                        } else if widgets::secondary_button(ui, "Скачать базу из интернета").clicked() {
+                            state.start_update();
+                        }
                         if widgets::secondary_button(ui, "Страница базы").clicked() {
                             open_database_page();
                         }
@@ -129,6 +134,27 @@ fn database_card(ui: &mut Ui, state: &mut CommunityState) {
                         .color(if message.is_error { ACCENT } else { SUCCESS }),
                 );
             }
+            if let Some(update) = &state.update_result {
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(&update.text)
+                        .font(font(9.0))
+                        .color(if update.is_error { ACCENT } else { SUCCESS }),
+                );
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(ph::CLOUD_ARROW_DOWN)
+                        .font(FontId::new(13.0, FontFamily::Proportional))
+                        .color(TEXT_DIM),
+                );
+                ui.label(
+                    RichText::new("База скачивается с официального репозитория сообщества (GitHub) и обновляется локально. Файлы с компьютера никуда не отправляются.")
+                        .font(font(9.0))
+                        .color(TEXT_DIM),
+                );
+            });
         });
 }
 
