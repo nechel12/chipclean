@@ -1,8 +1,6 @@
 use std::{
     fs,
-    os::windows::process::CommandExt,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -11,9 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use crossbeam_channel::Sender;
 use egui_phosphor::regular as ph;
@@ -764,26 +760,10 @@ fn export_key_to(
 ) -> Result<PathBuf> {
     let full = format!("{}\\{}", hive.reg_name(), key_path);
     let path = dir.join(filename);
-    let output = Command::new(reg_exe())
-        .creation_flags(CREATE_NO_WINDOW)
-        .arg("export")
-        .arg(&full)
-        .arg(&path)
-        .arg("/y")
-        .output()
-        .with_context(|| format!("не удалось запустить reg.exe для {full}"))?;
-
-    if !output.status.success() {
-        bail!(
-            "reg.exe export завершился с кодом {} для {full}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    if !path.is_file() {
-        bail!("reg.exe не создал файл {}", path.display());
-    }
-
+    let text = crate::core::registry_export::export_key_text(hive.root(), hive.reg_name(), key_path)
+        .with_context(|| format!("не удалось сформировать экспорт для {full}"))?;
+    fs::write(&path, text)
+        .with_context(|| format!("не удалось записать экспорт в {}", path.display()))?;
     Ok(path)
 }
 
@@ -823,14 +803,6 @@ fn delete_finding(finding: &RegistryFinding) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn reg_exe() -> PathBuf {
-    std::env::var_os("WINDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-        .join("System32")
-        .join("reg.exe")
 }
 
 fn sanitize_filename(path: &str) -> String {

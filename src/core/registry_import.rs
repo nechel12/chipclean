@@ -247,7 +247,7 @@ fn import_at(preview: &ImportPreview, backups_root: &Path) -> Result<ImportRepor
         report.backups += 1;
     }
 
-    registry_editor::import_reg_file(&preview.path)?;
+    apply_keys(&preview.keys)?;
 
     journal(json!({
         "ts": Utc::now().to_rfc3339(),
@@ -276,6 +276,43 @@ fn truncate(text: &str, max: usize) -> String {
     let mut value: String = text.chars().take(max).collect();
     value.push('…');
     value
+}
+
+fn parse_dword(text: &str) -> Result<u32> {    let text = text.trim();
+    if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("dword:")) {
+        return u32::from_str_radix(hex, 16).context("неверный hex-DWORD");
+    }
+    text.parse::<u32>().context("неверный DWORD")
+}
+
+/// Применяет разделы предпросмотра импорта напрямую через windows-registry
+/// (без вызова внешней утилиты reg.exe).
+fn apply_keys(keys: &[ImportKey]) -> Result<()> {
+    for key in keys {
+        if key.delete {
+            if let Some((parent, child)) = registry_editor::split_parent(&key.path)
+                && let Ok(parent_key) = registry_editor::open_key(key.hive, &parent)
+            {
+                let _ = parent_key.remove_tree(child);
+            }
+            continue;
+        }
+
+        let Ok(key_value) = registry_editor::open_or_create_key(key.hive, &key.path) else {
+            continue;
+        };
+        for value in &key.values {
+            if value.ty == REG_DWORD
+                && let Ok(number) = parse_dword(&value.preview)
+            {
+                let _ = key_value.set_u32(&value.name, number);
+                continue;
+            }
+            // QWORD и остальные типы сохраняем строковым представлением.
+            let _ = key_value.set_string(&value.name, &value.preview);
+        }
+    }
+    Ok(())
 }
 
 fn journal(event: serde_json::Value) {

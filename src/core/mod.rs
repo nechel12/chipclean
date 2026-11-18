@@ -19,6 +19,7 @@ pub mod reg_file;
 pub mod registry;
 pub mod registry_editor;
 pub mod registry_editor_state;
+pub mod registry_export;
 pub mod registry_import;
 pub mod registry_snapshots;
 pub mod registry_snapshots_state;

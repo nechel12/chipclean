@@ -1,9 +1,7 @@
 use std::{
     collections::{BTreeSet, VecDeque},
     fs,
-    os::windows::process::CommandExt,
     path::{Path, PathBuf},
-    process::Command,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -13,8 +11,6 @@ use serde_json::json;
 use windows_registry::{CLASSES_ROOT, CURRENT_CONFIG, CURRENT_USER, Key, LOCAL_MACHINE, USERS};
 
 use crate::core::journal::Journal;
-
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub const KEY_STATS_LIMIT: usize = 5_000;
 
@@ -104,13 +100,20 @@ pub fn open_key(hive: EditorHive, path: &str) -> Result<Key> {
         .with_context(|| format!("не удалось открыть {}", full_path(hive, path)))
 }
 
-fn open_key_rw(hive: EditorHive, path: &str) -> Result<Key> {
+pub(crate) fn open_key_rw(hive: EditorHive, path: &str) -> Result<Key> {
     hive.root()
         .options()
         .read()
         .write()
         .open(path)
         .with_context(|| format!("не удалось открыть для записи {}", full_path(hive, path)))
+}
+
+/// Открывает (или создаёт) ключ для записи.
+pub(crate) fn open_or_create_key(hive: EditorHive, path: &str) -> Result<Key> {
+    hive.root()
+        .create(path)
+        .with_context(|| format!("не удалось создать {}", full_path(hive, path)))
 }
 
 pub fn list_subkeys(hive: EditorHive, path: &str) -> Result<Vec<String>> {
@@ -672,29 +675,10 @@ pub fn backup_key_to(hive: EditorHive, path: &str, base_dir: &Path) -> Result<Pa
         path.replace('\\', "_")
     };
     let path_file = base_dir.join(format!("editor-{stamp}-{}.reg", sanitize(&label)));
-    let full = if path.trim().is_empty() {
-        hive.reg_name().to_owned()
-    } else {
-        format!("{}\\{}", hive.reg_name(), path)
-    };
-    let output = Command::new(reg_exe())
-        .creation_flags(CREATE_NO_WINDOW)
-        .arg("export")
-        .arg(&full)
-        .arg(&path_file)
-        .arg("/y")
-        .output()
-        .with_context(|| format!("не удалось запустить reg.exe для {full}"))?;
-    if !output.status.success() {
-        bail!(
-            "reg.exe export завершился с {} для {full}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    if !path_file.is_file() {
-        bail!("reg.exe не создал файл {}", path_file.display());
-    }
+    let text = crate::core::registry_export::export_key_text(hive.root(), hive.reg_name(), path)
+        .with_context(|| "не удалось сформировать экспорт".to_owned())?;
+    fs::write(&path_file, text)
+        .with_context(|| format!("не удалось записать экспорт в {}", path_file.display()))?;
     Ok(path_file)
 }
 
@@ -702,20 +686,10 @@ pub fn import_reg_file(path: &Path) -> Result<()> {
     if !path.is_file() {
         bail!("Файл .reg не найден: {}", path.display());
     }
-    let output = Command::new(reg_exe())
-        .creation_flags(CREATE_NO_WINDOW)
-        .arg("import")
-        .arg(path)
-        .output()
-        .with_context(|| format!("не удалось запустить reg.exe для {}", path.display()))?;
-    if !output.status.success() {
-        bail!(
-            "reg.exe import завершился с {} для {}: {}",
-            output.status,
-            path.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
+    let preview = crate::core::registry_import::preview(path)
+        .with_context(|| format!("не удалось прочитать файл {}", path.display()))?;
+    crate::core::registry_import::import(&preview)
+        .with_context(|| format!("не удалось импортировать файл {}", path.display()))?;
     Ok(())
 }
 
@@ -790,14 +764,6 @@ fn truncate(text: &str, max: usize) -> String {
     let mut value: String = text.chars().take(max).collect();
     value.push('…');
     value
-}
-
-fn reg_exe() -> PathBuf {
-    std::env::var_os("WINDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-        .join("System32")
-        .join("reg.exe")
 }
 
 fn journal(event: serde_json::Value) {
