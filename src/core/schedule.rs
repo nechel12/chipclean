@@ -12,17 +12,14 @@ use std::cell::Cell;
 
 use anyhow::{Context, Result};
 use windows::{
-    Win32::{
-        System::{
-            Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx},
-            TaskScheduler::{
-                IExecAction, IDailyTrigger, ILogonTrigger, ITaskDefinition, ITaskFolder,
-                ITaskService, TASK_ACTION_EXEC, TASK_CREATE_OR_UPDATE,
-                TASK_LOGON_INTERACTIVE_TOKEN, TASK_RUNLEVEL_HIGHEST, TASK_TRIGGER_DAILY,
-                TASK_TRIGGER_LOGON, TaskScheduler,
-            },
-            Variant::VARIANT,
+    Win32::System::{
+        Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx},
+        TaskScheduler::{
+            IDailyTrigger, IExecAction, ILogonTrigger, ITaskDefinition, ITaskFolder, ITaskService,
+            TASK_ACTION_EXEC, TASK_CREATE_OR_UPDATE, TASK_LOGON_INTERACTIVE_TOKEN,
+            TASK_RUNLEVEL_HIGHEST, TASK_TRIGGER_DAILY, TASK_TRIGGER_LOGON, TaskScheduler,
         },
+        Variant::VARIANT,
     },
     core::{BSTR, Interface},
 };
@@ -85,15 +82,16 @@ pub fn register(hour: u32, minute: u32) -> Result<()> {
     let folder = root_folder(&service)?;
     let definition = new_definition(&service)?;
 
-    let triggers = unsafe { definition.Triggers() }
-        .context("не удалось получить коллекцию триггеров")?;
+    let triggers =
+        unsafe { definition.Triggers() }.context("не удалось получить коллекцию триггеров")?;
     let trigger = unsafe { triggers.Create(TASK_TRIGGER_DAILY) }
         .context("не удалось создать ежедневный триггер")?;
     let daily: IDailyTrigger = trigger.cast().context("неверный тип триггера")?;
 
     let hour = hour.min(23);
     let minute = minute.min(59);
-    let boundary = format!("2026-01-01T{hour:02}:{minute:02}:00");
+    let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let boundary = format!("{date}T{hour:02}:{minute:02}:00");
     unsafe { daily.SetStartBoundary(&BSTR::from(boundary)) }
         .context("не удалось задать время запуска")?;
     unsafe { daily.SetDaysInterval(1) }.context("не удалось задать интервал")?;
@@ -111,8 +109,8 @@ pub fn register_startup_check() -> Result<()> {
     let folder = root_folder(&service)?;
     let definition = new_definition(&service)?;
 
-    let triggers = unsafe { definition.Triggers() }
-        .context("не удалось получить коллекцию триггеров")?;
+    let triggers =
+        unsafe { definition.Triggers() }.context("не удалось получить коллекцию триггеров")?;
     let _: ILogonTrigger = unsafe { triggers.Create(TASK_TRIGGER_LOGON) }
         .context("не удалось создать триггер входа")?
         .cast()
@@ -129,23 +127,22 @@ fn new_definition(service: &ITaskService) -> Result<ITaskDefinition> {
 }
 
 fn set_action(definition: &ITaskDefinition, arguments: &str) -> Result<()> {
-    let actions = unsafe { definition.Actions() }
-        .context("не удалось получить коллекцию действий")?;
-    let action = unsafe { actions.Create(TASK_ACTION_EXEC) }
-        .context("не удалось создать действие")?;
+    let actions =
+        unsafe { definition.Actions() }.context("не удалось получить коллекцию действий")?;
+    let action =
+        unsafe { actions.Create(TASK_ACTION_EXEC) }.context("не удалось создать действие")?;
     let exec: IExecAction = action.cast().context("неверный тип действия")?;
 
     let exe = std::env::current_exe().context("не удалось получить путь к исполняемому файлу")?;
     unsafe { exec.SetPath(&BSTR::from(exe.display().to_string())) }
         .context("не удалось задать путь к исполняемому файлу")?;
-    unsafe { exec.SetArguments(&BSTR::from(arguments)) }
-        .context("не удалось задать аргументы")?;
+    unsafe { exec.SetArguments(&BSTR::from(arguments)) }.context("не удалось задать аргументы")?;
     Ok(())
 }
 
 fn set_principal(definition: &ITaskDefinition) -> Result<()> {
-    let principal = unsafe { definition.Principal() }
-        .context("не удалось получить учётную запись задачи")?;
+    let principal =
+        unsafe { definition.Principal() }.context("не удалось получить учётную запись задачи")?;
     unsafe { principal.SetLogonType(TASK_LOGON_INTERACTIVE_TOKEN) }
         .context("не удалось задать тип входа")?;
     unsafe { principal.SetRunLevel(TASK_RUNLEVEL_HIGHEST) }
@@ -153,7 +150,11 @@ fn set_principal(definition: &ITaskDefinition) -> Result<()> {
     Ok(())
 }
 
-fn register_definition(folder: &ITaskFolder, name: &str, definition: &ITaskDefinition) -> Result<()> {
+fn register_definition(
+    folder: &ITaskFolder,
+    name: &str,
+    definition: &ITaskDefinition,
+) -> Result<()> {
     let empty = VARIANT::default();
     unsafe {
         folder.RegisterTaskDefinition(
