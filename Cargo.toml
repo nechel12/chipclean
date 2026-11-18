@@ -12,7 +12,7 @@ anyhow = "1.0"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 crossbeam-channel = "0.5"
 directories = "6.0"
-eframe = { version = "0.36", default-features = false, features = [
+eframe = { version = "0.37", default-features = false, features = [
   "accesskit",
   "default_fonts",
   "glow",
