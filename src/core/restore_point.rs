@@ -27,15 +27,27 @@ pub fn create(description: &str) -> Result<()> {
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let stderr = stderr.trim();
-    bail!(
-        "не удалось создать точку восстановления{}",
-        if stderr.is_empty() {
-            String::new()
-        } else {
-            format!(": {stderr}")
-        }
-    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let message = if !stderr.trim().is_empty() {
+        stderr.trim().to_owned()
+    } else if !stdout.trim().is_empty() {
+        stdout.trim().to_owned()
+    } else {
+        format!("код завершения {}", output.status)
+    };
+
+    // Виновата обычно отключённая защита системы.
+    if message.to_lowercase().contains("not enabled")
+        || message.to_lowercase().contains("disabled")
+        || message.to_lowercase().contains("нет")
+    {
+        bail!(
+            "не удалось создать точку восстановления: {message}. \
+             Включите защиту системы для диска (Панель управления → Система → Защита системы)."
+        );
+    }
+
+    bail!("не удалось создать точку восстановления: {message}");
 }
 
 #[cfg(test)]
