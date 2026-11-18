@@ -318,10 +318,9 @@ fn build_subtitle(entry: &TweakEntry) -> String {
         TweakKind::Fixed { .. } => path,
         TweakKind::Floating { unit, min, max, .. } => {
             let value = entry.current_raw.clone().unwrap_or_else(|| "—".to_owned());
-            let range = if !min.is_empty() && !max.is_empty() {
-                format!(" · диапазон {min}–{max} {unit}")
-            } else {
-                String::new()
+            let range = match (min, max) {
+                (Some(lower), Some(upper)) => format!(" · диапазон {lower}–{upper} {unit}"),
+                _ => String::new(),
             };
             format!("{path} · текущее: {value} {unit}{range}")
         }

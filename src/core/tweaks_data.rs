@@ -1,10 +1,8 @@
 // ????????????? ????????????? ?? Reg Organizer tweaks.bkp.xml (ChemTable Software).
 // ????????: C:\Program Files\Reg Organizer\tweaks.bkp.xml ? 51 ????.
-// ?????? ?????????: <Tweak> ? ?????? RegistryKey/RegistryValueName/RegistryValueType/
-// FixedStates ??? FloatingState. ????????? ????????? ????????, ????? ?????????
-// (???????? ???????) ????????? ? Reg Organizer.
+// ?????????????? ????????: Dword(u32) / Text(&str) / Absent.
 
-use super::tweaks::{RegRoot, TweakInfo, TweakKind};
+use super::tweaks::{RegRoot, TweakInfo, TweakKind, TweakValue, ValueType};
 
 pub static TWEAKS: &[TweakInfo] = &[
     TweakInfo {
@@ -13,8 +11,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "System\\CurrentControlSet\\Control\\Session Manager\\Configuration Manager",
         value: Some("EnablePeriodicBackup"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -23,8 +21,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::ClassesRoot,
         key: "CLSID\\{018D5C66-4533-4307-9B53-224DE2ED1FE6}",
         value: Some("System.IsPinnedToNameSpaceTree"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "0", off_value: "1", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(0), off_value: TweakValue::Dword(1), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -33,8 +31,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\ImmersiveShell",
         value: Some("UseActionCenterExperience"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "0", off_value: "1", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(0), off_value: TweakValue::Dword(1), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -43,8 +41,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
         value: Some("EnableXAMLStartMenu"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "0", off_value: "1", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(0), off_value: TweakValue::Dword(1), default_on: false },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -53,8 +51,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Policies\\Microsoft\\Windows\\DWM",
         value: Some("DisallowFlip3d"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -63,8 +61,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Policies\\Microsoft\\Windows\\Explorer",
         value: Some("DisableNotificationCenter"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -73,8 +71,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ImmersiveShell",
         value: Some("UseActionCenterExperience"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "0", off_value: "1", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(0), off_value: TweakValue::Dword(1), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -83,8 +81,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ImmersiveShell",
         value: Some("UseWin32TrayClockExperience"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -93,8 +91,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\\DelayedApps",
         value: Some("Delay_Sec"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "0", min: "0", max: "600", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(0), min: Some(0), max: Some(600), unit: "" },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -103,8 +101,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\ImmersiveShell\\Launcher",
         value: Some("Launcher_ShowPowerButtonOnStartScreen"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "0", off_value: "1", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(0), off_value: TweakValue::Dword(1), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -113,8 +111,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\HideDesktopIcons\\NewStartPanel",
         value: Some("{645FF040-5081-101B-9F08-00AA002F954E}"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -123,8 +121,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
         value: Some("SeparateProcess"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -133,8 +131,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
         value: Some("NoResolveTrack"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -143,8 +141,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Control Panel\\Desktop",
         value: Some("HungAppTimeout"),
-        value_type: false,
-        kind: TweakKind::Floating { default_value: "5000", min: "0", max: "", unit: "" },
+        value_type: ValueType::String,
+        kind: TweakKind::Floating { default_value: TweakValue::Text("5000"), min: None, max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -153,8 +151,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
         value: Some("DisableStartupSound"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -163,8 +161,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\DWM",
         value: Some("ColorizationOpaqueBlend"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -173,8 +171,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
         value: Some("NoInternetOpenWith"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -183,8 +181,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
         value: Some("NoRecentDocsMenu"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -193,8 +191,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
         value: Some("MaxConnectionsPerServer"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "0", min: "0", max: "", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(0), min: Some(0), max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -203,8 +201,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
         value: Some("MaxConnectionsPer1_0Server"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "0", min: "0", max: "", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(0), min: Some(0), max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -213,8 +211,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Internet Explorer\\MAIN\\FeatureControl\\FEATURE_MAXCONNECTIONSPERSERVER",
         value: Some("iexplore.exe"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "2", min: "0", max: "", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(2), min: Some(0), max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -223,8 +221,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Internet Explorer\\MAIN\\FeatureControl\\FEATURE_MAXCONNECTIONSPER1_0SERVER",
         value: Some("iexplore.exe"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "4", min: "0", max: "", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(4), min: Some(0), max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -233,8 +231,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::ClassesRoot,
         key: "Folder\\shellex\\ContextMenuHandlers\\Copyto",
         value: None,
-        value_type: false,
-        kind: TweakKind::Fixed { on_value: "{C2FBB630-2971-11d1-A18C-00C04FD75D13}", off_value: "", default_on: false },
+        value_type: ValueType::String,
+        kind: TweakKind::Fixed { on_value: TweakValue::Text("{C2FBB630-2971-11d1-A18C-00C04FD75D13}"), off_value: TweakValue::Absent, default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -243,8 +241,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::ClassesRoot,
         key: "*\\shellex\\ContextMenuHandlers\\Moveto",
         value: None,
-        value_type: false,
-        kind: TweakKind::Fixed { on_value: "{C2FBB631-2971-11d1-A18C-00C04FD75D13}", off_value: "", default_on: false },
+        value_type: ValueType::String,
+        kind: TweakKind::Fixed { on_value: TweakValue::Text("{C2FBB631-2971-11d1-A18C-00C04FD75D13}"), off_value: TweakValue::Absent, default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -253,8 +251,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\DWM",
         value: Some("AnimationsShiftKey"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -263,8 +261,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
         value: Some("TaskbarSmallIcons"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -273,8 +271,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management",
         value: Some("DisablePagingExecutive"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -283,8 +281,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
         value: Some("DisplayLastLogonInfo"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -293,8 +291,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Policies\\Microsoft\\Windows\\Explorer",
         value: Some("NoWindowMinimizingShortcuts"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -303,8 +301,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SYSTEM\\CurrentControlSet\\Services\\Dnscache\\Parameters",
         value: Some("CacheHashTableBucketSize"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "0", min: "0", max: "", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(0), min: Some(0), max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -313,8 +311,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
         value: Some("NoResolveSearch"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -323,8 +321,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\CLSID\\{645FF040-5081-101B-9F08-00AA002F954E}",
         value: None,
-        value_type: false,
-        kind: TweakKind::Floating { default_value: "&lt;English&gt;Recycle Bin&lt;/English&gt;&lt;Russian&gt;Корзина&lt;/Russian&gt; &lt;French&gt;Corbeille&lt;/French&gt;", min: "", max: "", unit: "" },
+        value_type: ValueType::String,
+        kind: TweakKind::Floating { default_value: TweakValue::Text("&lt;English&gt;Recycle Bin&lt;/English&gt;&lt;Russian&gt;Корзина&lt;/Russian&gt; &lt;French&gt;Corbeille&lt;/French&gt;"), min: None, max: None, unit: "" },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -333,8 +331,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::ClassesRoot,
         key: "*\\shellex\\ContextMenuHandlers\\Copyto",
         value: None,
-        value_type: false,
-        kind: TweakKind::Fixed { on_value: "{C2FBB630-2971-11d1-A18C-00C04FD75D13}", off_value: "", default_on: false },
+        value_type: ValueType::String,
+        kind: TweakKind::Fixed { on_value: TweakValue::Text("{C2FBB630-2971-11d1-A18C-00C04FD75D13}"), off_value: TweakValue::Absent, default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -343,8 +341,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
         value: Some("VerboseStatus"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -353,8 +351,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
         value: Some("Start_LargeMFUIcons"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "0", off_value: "1", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(0), off_value: TweakValue::Dword(1), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -363,8 +361,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Control Panel\\Desktop\\WindowMetrics",
         value: Some("MinAnimate"),
-        value_type: false,
-        kind: TweakKind::Fixed { on_value: "0", off_value: "1", default_on: false },
+        value_type: ValueType::String,
+        kind: TweakKind::Fixed { on_value: TweakValue::Text("0"), off_value: TweakValue::Text("1"), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -373,8 +371,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon",
         value: Some("AutoRestartShell"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: true },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: true },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -383,8 +381,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::ClassesRoot,
         key: "Folder\\shellex\\ContextMenuHandlers\\Moveto",
         value: None,
-        value_type: false,
-        kind: TweakKind::Fixed { on_value: "{C2FBB631-2971-11d1-A18C-00C04FD75D13}", off_value: "", default_on: false },
+        value_type: ValueType::String,
+        kind: TweakKind::Fixed { on_value: TweakValue::Text("{C2FBB631-2971-11d1-A18C-00C04FD75D13}"), off_value: TweakValue::Absent, default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -393,8 +391,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SYSTEM\\CurrentControlSet\\Services\\Dnscache\\Parameters",
         value: Some("MaxCacheEntryTtlLimit"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "0", min: "0", max: "", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(0), min: Some(0), max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -403,8 +401,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
         value: Some("PromptOnSecureDesktop"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "0", off_value: "1", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(0), off_value: TweakValue::Dword(1), default_on: false },
         need_logoff: false, need_reboot: false,
     },
     TweakInfo {
@@ -413,8 +411,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SYSTEM\\CurrentControlSet\\Control",
         value: Some("WaitToKillAppTimeout"),
-        value_type: false,
-        kind: TweakKind::Floating { default_value: "20000", min: "0", max: "", unit: "" },
+        value_type: ValueType::String,
+        kind: TweakKind::Floating { default_value: TweakValue::Text("20000"), min: None, max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -423,8 +421,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SYSTEM\\CurrentControlSet\\Services\\Dnscache\\Parameters",
         value: Some("MaxSOACacheEntryTtlLimit"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "0", min: "0", max: "", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(0), min: Some(0), max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -433,8 +431,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
         value: Some("LinkResolveIgnoreLinkInfo"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -443,8 +441,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
         value: Some("NoTrayItemsDisplay"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -453,8 +451,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Control Panel\\Desktop",
         value: Some("LowLevelHooksTimeout"),
-        value_type: false,
-        kind: TweakKind::Floating { default_value: "0", min: "", max: "", unit: "" },
+        value_type: ValueType::String,
+        kind: TweakKind::Floating { default_value: TweakValue::Text("0"), min: None, max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -463,8 +461,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
         value: Some("Start_ShowRecentDocs"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -473,8 +471,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
         value: Some("EnableVirtualization"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: true },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: true },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -483,8 +481,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer",
         value: Some("NoLowDiskSpaceChecks"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -493,8 +491,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
         value: Some("StartMenuFavorites"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
     TweakInfo {
@@ -503,8 +501,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::LocalMachine,
         key: "SYSTEM\\CurrentControlSet\\Services\\Dnscache\\Parameters",
         value: Some("CacheHashTableSize"),
-        value_type: true,
-        kind: TweakKind::Floating { default_value: "0", min: "0", max: "", unit: "" },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Floating { default_value: TweakValue::Dword(0), min: Some(0), max: None, unit: "" },
         need_logoff: false, need_reboot: true,
     },
     TweakInfo {
@@ -513,8 +511,8 @@ pub static TWEAKS: &[TweakInfo] = &[
         root: RegRoot::CurrentUser,
         key: "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
         value: Some("Start_ShowRun"),
-        value_type: true,
-        kind: TweakKind::Fixed { on_value: "1", off_value: "0", default_on: false },
+        value_type: ValueType::Dword,
+        kind: TweakKind::Fixed { on_value: TweakValue::Dword(1), off_value: TweakValue::Dword(0), default_on: false },
         need_logoff: true, need_reboot: false,
     },
 ];
