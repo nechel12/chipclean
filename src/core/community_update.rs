@@ -30,8 +30,12 @@ pub struct UpdateOutcome {
 
 /// Скачивает свежую базу winapp2.ini и атомарно заменяет локальный файл.
 pub fn download_winapp2() -> Result<UpdateOutcome> {
-    let response = ureq::get(WINAPP2_URL)
-        .timeout(std::time::Duration::from_secs(30))
+    let config = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .build();
+    let agent = config.new_agent();
+    let response = agent
+        .get(WINAPP2_URL)
         .call()
         .context("не удалось подключиться к серверу базы")?;
 
@@ -42,6 +46,7 @@ pub fn download_winapp2() -> Result<UpdateOutcome> {
 
     let mut body = Vec::new();
     response
+        .into_body()
         .into_reader()
         .take(MAX_BYTES as u64 + 1)
         .read_to_end(&mut body)
