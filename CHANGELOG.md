@@ -6,8 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-18
+
 ### Added
 - Облачное обновление базы правил Winapp2 (скачивание, валидация, атомарная запись).
+
+### Changed
+- Зависимости: ureq 2 → 3.5 (адаптация под Agent/Config API), rusqlite 0.41 → 0.42.
+- CI ограничен Windows (проект Windows-only; std::os::windows).
+- Actions/checkout и artifact обновлены до v5 (Node 24).
 
 ## [0.1.0] - 2026-11-18
 
