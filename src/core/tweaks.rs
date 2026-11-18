@@ -188,29 +188,6 @@ pub fn reset(info: &TweakInfo) -> Result<TweakApplyOutcome> {
     })
 }
 
-/// Удаляет значение твика (для плавающих — отключение).
-#[allow(dead_code)]
-pub fn disable_remove(info: &TweakInfo) -> Result<TweakApplyOutcome> {
-    let previous = read_raw(info)?;
-    backup_reg(info, previous.as_deref())?;
-
-    let key = info
-        .root
-        .root()
-        .open(info.key)
-        .context("не удалось открыть ключ реестра")?;
-    if let Some(name) = info.value {
-        let _ = key.remove_value(name);
-    }
-
-    record_journal(info, "tweak_removed", previous.as_deref(), None)?;
-
-    Ok(TweakApplyOutcome {
-        requires_logoff: info.need_logoff,
-        requires_reboot: info.need_reboot,
-    })
-}
-
 /// Применяет произвольное значение к плавающему твику (с проверкой диапазона).
 pub fn apply_value(info: &TweakInfo, value: &str) -> Result<TweakApplyOutcome> {
     let value = value.trim();

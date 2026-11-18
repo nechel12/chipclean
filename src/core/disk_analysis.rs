@@ -59,26 +59,26 @@ pub fn spawn(
                 let Ok(entry) = entry else {
                     continue;
                 };
-                if entry.file_type().is_file() {
-                    if let Ok(metadata) = entry.metadata() {
-                        let size = metadata.len();
-                        total_bytes = total_bytes.saturating_add(size);
-                        files_count += 1;
-                        files.push(DiskFileEntry {
-                            path: entry.path().to_path_buf(),
-                            size,
+                if entry.file_type().is_file()
+                    && let Ok(metadata) = entry.metadata()
+                {
+                    let size = metadata.len();
+                    total_bytes = total_bytes.saturating_add(size);
+                    files_count += 1;
+                    files.push(DiskFileEntry {
+                        path: entry.path().to_path_buf(),
+                        size,
+                    });
+                    if files.len().is_multiple_of(20_000) {
+                        let _ = tx.send(DiskAnalysisEvent::Progress {
+                            collected: files.len(),
+                            current: entry.path().display().to_string(),
                         });
-                        if files.len() % 20_000 == 0 {
-                            let _ = tx.send(DiskAnalysisEvent::Progress {
-                                collected: files.len(),
-                                current: entry.path().display().to_string(),
-                            });
-                        }
                     }
                 }
             }
 
-            files.sort_by(|left, right| right.size.cmp(&left.size));
+            files.sort_by_key(|left| std::cmp::Reverse(left.size));
             files.truncate(300);
 
             let _ = tx.send(DiskAnalysisEvent::Finished {

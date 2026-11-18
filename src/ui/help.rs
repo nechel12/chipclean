@@ -89,10 +89,10 @@ pub fn show(ui: &mut Ui) {
     card(ui, license_title, &license_lines);
 
     ui.add_space(6.0);
-    if widgets::secondary_button_icon(ui, t("open_guide"), ph::BOOK_OPEN).clicked() {
-        if let Err(err) = crate::core::guide::open_guide() {
-            tracing::warn!(%err, "failed to open guide");
-        }
+    if widgets::secondary_button_icon(ui, t("open_guide"), ph::BOOK_OPEN).clicked()
+        && let Err(err) = crate::core::guide::open_guide()
+    {
+        tracing::warn!(%err, "failed to open guide");
     }
 }
 

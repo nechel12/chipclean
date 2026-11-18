@@ -90,8 +90,8 @@ fn toolbar(ui: &mut Ui, state: &mut TweaksState) {
             state.scan();
         }
 
-        if pending > 0 {
-            if ui
+        if pending > 0
+            && ui
                 .add(
                     egui::Button::new(
                         RichText::new(t("discard"))
@@ -102,9 +102,8 @@ fn toolbar(ui: &mut Ui, state: &mut TweaksState) {
                     .corner_radius(8),
                 )
                 .clicked()
-            {
-                state.discard_changes();
-            }
+        {
+            state.discard_changes();
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -127,10 +126,9 @@ fn toolbar(ui: &mut Ui, state: &mut TweaksState) {
                     .corner_radius(8),
                 )
                 .clicked()
+                && let Err(err) = state.apply_pending()
             {
-                if let Err(err) = state.apply_pending() {
-                    state.error = Some(format!("Не удалось применить изменения: {err}"));
-                }
+                state.error = Some(format!("Не удалось применить изменения: {err}"));
             }
         });
     });

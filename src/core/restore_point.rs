@@ -40,8 +40,6 @@ pub fn create(description: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn description_is_quoted_safely() {
         let script_draft = format!(
