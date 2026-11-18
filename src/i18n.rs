@@ -116,6 +116,8 @@ pub fn t(key: &str) -> &'static str {
         (Lang::En, "language") => "Interface language",
         (Lang::Ru, "beta_note") => "Часть технических сообщений пока только на русском.",
         (Lang::En, "beta_note") => "Some technical messages are still in Russian.",
+        (Lang::Ru, "no_changes") => "Изменений нет",
+        (Lang::En, "no_changes") => "No changes",
         _ => "",
     }
 }

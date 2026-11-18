@@ -190,7 +190,7 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
 
         card(&mut columns[1], "О программе", |ui| {
             ui.label(
-                RichText::new("ChipClean 0.1.0")
+                RichText::new(format!("ChipClean {}", env!("CARGO_PKG_VERSION")))
                     .font(font_semibold(14.0))
                     .color(TEXT),
             );

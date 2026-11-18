@@ -110,7 +110,7 @@ fn toolbar(ui: &mut Ui, state: &mut TweaksState) {
             let label = if pending > 0 {
                 format!("{} ({pending})", t("apply"))
             } else {
-                t("status").to_owned()
+                t("no_changes").to_owned()
             };
             let enabled = pending > 0 && !state.busy;
             if ui
@@ -203,7 +203,7 @@ fn tweak_row(ui: &mut Ui, entry: &TweakEntry, state: &TweaksState) -> TweakRowAc
             return TweakRowAction::Toggle(checked);
         }
     } else {
-        if state.editing == Some(0) || state.editing.is_some() {
+        if state.editing.is_some() {
             // не перехватываем клики строки во время редактирования
             let _ = rect;
             if response.clicked() {
@@ -223,6 +223,7 @@ fn tweak_row(ui: &mut Ui, entry: &TweakEntry, state: &TweaksState) -> TweakRowAc
                 .fill(SURFACE_2)
                 .corner_radius(8),
             )
+            .on_hover_text("Ввести собственное значение в допустимом диапазоне")
             .clicked()
         {
             return TweakRowAction::Edit;
@@ -240,6 +241,7 @@ fn tweak_row(ui: &mut Ui, entry: &TweakEntry, state: &TweaksState) -> TweakRowAc
                 .fill(SURFACE_2)
                 .corner_radius(8),
             )
+            .on_hover_text("Вернуть значение по умолчанию")
             .clicked()
         {
             return TweakRowAction::Reset;

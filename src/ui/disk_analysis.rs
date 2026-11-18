@@ -69,6 +69,7 @@ fn toolbar(ui: &mut Ui, state: &mut DiskAnalysisState) {
                     .fill(if selected { ACCENT } else { SURFACE_2 })
                     .corner_radius(7),
                 )
+                .on_hover_text(format!("Выбрать том {label}"))
                 .clicked()
             {
                 state.selected_root = drive;
@@ -98,6 +99,7 @@ fn toolbar(ui: &mut Ui, state: &mut DiskAnalysisState) {
                     .min_size(Vec2::new(140.0, 34.0))
                     .corner_radius(8),
                 )
+                .on_hover_text("Просканировать том и найти крупнейшие файлы")
                 .clicked()
             {
                 state.start_scan();
@@ -120,10 +122,11 @@ fn toolbar(ui: &mut Ui, state: &mut DiskAnalysisState) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if !state.progress_current.is_empty() {
                     ui.label(
-                        RichText::new(&state.progress_current)
+                        RichText::new(truncate_middle(&state.progress_current, 90))
                             .font(font(9.0))
                             .color(TEXT_DIM),
-                    );
+                    )
+                    .on_hover_text(&state.progress_current);
                 }
             });
         });
@@ -180,6 +183,23 @@ fn summary(ui: &mut Ui, state: &DiskAnalysisState) {
                 });
             });
         });
+}
+
+fn truncate_middle(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let keep = max.saturating_sub(3) / 2;
+    let head: String = text.chars().take(keep).collect();
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{head}…{tail}")
 }
 
 fn file_row(ui: &mut Ui, entry: &crate::core::disk_analysis::DiskFileEntry) {

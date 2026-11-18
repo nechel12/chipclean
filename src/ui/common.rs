@@ -18,7 +18,8 @@ pub fn page_header(ui: &mut Ui, page: Page) {
             );
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            widgets::badge(ui, "0.1.0 · beta", TEXT_DIM);
+            let version = env!("CARGO_PKG_VERSION");
+            widgets::badge(ui, &format!("v{version} · beta"), TEXT_DIM);
         });
     });
 
