@@ -26,6 +26,10 @@ pub fn show(ui: &mut Ui, state: &mut UninstallState) {
         ui.add_space(10.0);
         follow_up_card(ui, state);
     }
+    if state.tracked_results.is_some() {
+        ui.add_space(10.0);
+        tracked_results_card(ui, state);
+    }
     ui.add_space(10.0);
     filter_bar(ui, state);
     ui.add_space(8.0);
@@ -172,12 +176,99 @@ fn follow_up_card(ui: &mut Ui, state: &mut UninstallState) {
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if state.tracked_before.is_some() {
+                        if widgets::secondary_button_icon(
+                            ui,
+                            "Сравнить снимок",
+                            ph::CAMERA,
+                        )
+                        .clicked()
+                        {
+                            state.finish_tracked();
+                        }
+                        ui.add_space(8.0);
+                    }
                     if widgets::primary_button(ui, "Найти следы", ph::MAGNIFYING_GLASS, true)
                         .clicked()
                     {
                         state.request_traces_scan();
                     }
                 });
+            });
+        });
+}
+
+fn tracked_results_card(ui: &mut Ui, state: &mut UninstallState) {
+    let Some(results) = state.tracked_results.clone() else {
+        return;
+    };
+    let count = results.len();
+
+    Frame::new()
+        .fill(Color32::from_rgb(52, 22, 26))
+        .stroke(Stroke::new(1.0, ERROR))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::same(16))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(38.0), Sense::hover());
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::same(10), ERROR_SOFT);
+                ui.painter().text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    ph::TREE_STRUCTURE,
+                    FontId::new(19.0, FontFamily::Proportional),
+                    ERROR,
+                );
+
+                ui.add_space(10.0);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(if count == 0 {
+                            "Следы в реестре не найдены".to_owned()
+                        } else {
+                            format!("После удаления остались ключи: {count}")
+                        })
+                        .font(font_semibold(12.5))
+                        .color(TEXT),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(
+                            "Исчезнувшие из снимка ключи — вероятные следы программы. Удаление создаёт резервную запись в журнале операций.",
+                        )
+                        .font(font(9.5))
+                        .color(TEXT_MUTED),
+                    );
+                });
+
+                if count > 0 {
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if state.tracked_pending_clean {
+                                if widgets::primary_button(ui, "Подтвердить удаление", ph::CHECK, true)
+                                    .clicked()
+                                {
+                                    state.confirm_clean_traces();
+                                }
+                                ui.add_space(8.0);
+                                if widgets::secondary_button(ui, "Отмена").clicked() {
+                                    state.cancel_clean_traces();
+                                }
+                            } else if widgets::danger_button(
+                                ui,
+                                "Почистить следы",
+                                true,
+                            )
+                            .clicked()
+                            {
+                                state.request_clean_traces();
+                            }
+                        },
+                    );
+                }
             });
         });
 }
@@ -386,8 +477,7 @@ fn program_row(ui: &mut Ui, entry: &ProgramEntry, index: usize) -> bool {
     button_response.clicked() && enabled
 }
 
-fn empty_card(ui: &mut Ui, text: &str) {
-    Frame::new()
+fn empty_card(ui: &mut Ui, text: &str) {    Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
         .corner_radius(CornerRadius::same(12))
@@ -494,6 +584,13 @@ fn confirmation_modal(ctx: &egui::Context, state: &mut UninstallState) {
             }
 
             ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                ui.checkbox(
+                    &mut state.snapshot_requested,
+                    "Сделать снимок реестра до удаления (для поиска следов)",
+                );
+            });
+            ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),

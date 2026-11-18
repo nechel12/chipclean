@@ -1,5 +1,6 @@
 use super::{
     job::{self, Job},
+    tracked_uninstall::{self, RegistrySnapshotEntry},
     uninstall::{self, ProgramEntry},
 };
 
@@ -33,6 +34,10 @@ pub struct UninstallState {
     pub message: Option<Message>,
     pub pending_uninstall: Option<usize>,
     pub last_launched: Option<String>,
+    pub snapshot_requested: bool,
+    pub tracked_before: Option<Vec<RegistrySnapshotEntry>>,
+    pub tracked_results: Option<Vec<RegistrySnapshotEntry>>,
+    pub tracked_pending_clean: bool,
     traces_request: Option<String>,
     job: Option<Job<Result<Vec<ProgramEntry>, String>>>,
 }
@@ -47,6 +52,10 @@ impl UninstallState {
             message: None,
             pending_uninstall: None,
             last_launched: None,
+            snapshot_requested: false,
+            tracked_before: None,
+            tracked_results: None,
+            tracked_pending_clean: false,
             traces_request: None,
             job: None,
         }
@@ -185,6 +194,13 @@ impl UninstallState {
             return;
         };
 
+        if self.snapshot_requested {
+            self.tracked_before = Some(tracked_uninstall::capture_registry_snapshot());
+        }
+        self.snapshot_requested = false;
+        self.tracked_results = None;
+        self.tracked_pending_clean = false;
+
         match uninstall::launch_program(entry) {
             Ok(message) => {
                 self.last_launched = Some(entry.display_name.clone());
@@ -200,6 +216,77 @@ impl UninstallState {
                 });
             }
         }
+    }
+
+    /// Сравнивает снимок до/после: ищет исчезнувшие ключи реестра.
+    pub fn finish_tracked(&mut self) {
+        let Some(before) = self.tracked_before.take() else {
+            return;
+        };
+        let removed = tracked_uninstall::diff_removed(&before);
+        if removed.is_empty() {
+            self.message = Some(Message {
+                text: "Удалённых ключей не обнаружено.".to_owned(),
+                is_error: false,
+            });
+        }
+        self.tracked_results = Some(removed);
+    }
+
+    pub fn request_clean_traces(&mut self) {
+        if self.tracked_results.as_ref().is_some_and(|items| !items.is_empty()) {
+            self.tracked_pending_clean = true;
+        }
+    }
+
+    pub fn cancel_clean_traces(&mut self) {
+        self.tracked_pending_clean = false;
+    }
+
+    /// Удаляет найденные ключи-следы с записью в журнал.
+    pub fn confirm_clean_traces(&mut self) {
+        let Some(items) = self.tracked_results.take() else {
+            return;
+        };
+        self.tracked_pending_clean = false;
+
+        let Ok(mut journal) = crate::core::journal::Journal::open() else {
+            self.message = Some(Message {
+                text: "Не удалось открыть журнал операций.".to_owned(),
+                is_error: true,
+            });
+            return;
+        };
+
+        let mut removed = 0usize;
+        let mut errors = 0usize;
+        for entry in &items {
+            match tracked_uninstall::remove_entry(entry) {
+                Ok(()) => {
+                    removed += 1;
+                    let _ = journal.record(serde_json::json!({
+                        "ts": chrono::Utc::now().to_rfc3339(),
+                        "event": "uninstall_trace_removed",
+                        "hive": entry.hive,
+                        "path": entry.path,
+                    }));
+                }
+                Err(err) => {
+                    errors += 1;
+                    tracing::warn!(%err, path = %entry.display(), "failed to remove trace key");
+                }
+            }
+        }
+        let _ = journal.flush();
+
+        self.message = Some(Message {
+            text: if errors == 0 {
+                format!("Удалено ключей-следов: {removed}.")
+            } else {
+                format!("Удалено {removed}, ошибок: {errors}.")
+            },
+            is_error: errors > 0,
+        });
     }
 
     pub fn request_traces_scan(&mut self) {
