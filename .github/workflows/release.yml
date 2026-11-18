@@ -12,7 +12,7 @@ jobs:
     name: Build Windows x64
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -29,7 +29,7 @@ jobs:
           $hash = (Get-FileHash release-artifacts/chipclean-x64.exe -Algorithm SHA256).Hash.ToLower()
           Set-Content release-artifacts/SHA256SUMS.txt "$hash  chipclean-x64.exe"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-release
           path: release-artifacts
@@ -39,7 +39,7 @@ jobs:
     needs: build-windows
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: windows-release
           path: release-artifacts
