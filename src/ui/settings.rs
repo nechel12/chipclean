@@ -4,6 +4,7 @@ use egui_phosphor::regular as ph;
 use crate::{
     app::Page,
     config::{self, Settings},
+    i18n,
     theme::*,
     ui::{common, widgets},
 };
@@ -49,8 +50,22 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             },
         );
 
-        card(&mut columns[1], "Профиль очистки", |ui| {
-            let profile = crate::win::profile::current();
+        card(&mut columns[0], i18n::t("language"), |ui| {
+            egui::ComboBox::from_id_salt("lang-select")
+                .selected_text(i18n::Lang::from_code(&settings.lang).label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut settings.lang, "ru".to_owned(), "Русский");
+                    ui.selectable_value(&mut settings.lang, "en".to_owned(), "English");
+                });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(i18n::t("beta_note"))
+                    .font(font(9.0))
+                    .color(TEXT_DIM),
+            );
+        });
+
+        card(&mut columns[1], "Профиль очистки", |ui| {            let profile = crate::win::profile::current();
             ui.label(
                 RichText::new("Пользователь")
                     .font(font(9.5))
@@ -188,6 +203,127 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
             about_line(ui, "Rust 2024 · eframe/egui");
             about_line(ui, "Windows 10/11 x64 · UAC");
             about_line(ui, "Репозиторий приватный");
+        });
+    });
+
+    card(ui, "Фоновая очистка", |ui| {        ui.label(
+            RichText::new(
+                "Ежедневный запуск безопасных правил очистки через Планировщик заданий Windows.",
+            )
+            .font(font(10.0))
+            .color(TEXT_MUTED),
+        );
+        ui.add_space(10.0);
+
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Включить").font(font(11.0)).color(TEXT));
+            ui.checkbox(&mut settings.background_cleanup_enabled, "");
+        });
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("При входе в систему").font(font(11.0)).color(TEXT));
+            ui.checkbox(&mut settings.startup_check_enabled, "");
+        });
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Время запуска").font(font(11.0)).color(TEXT));
+            ui.add(
+                egui::Slider::new(&mut settings.background_cleanup_hour, 0..=23)
+                    .fixed_decimals(0)
+                    .suffix(" ч."),
+            );
+            ui.add(
+                egui::Slider::new(&mut settings.background_cleanup_minute, 0..=59)
+                    .fixed_decimals(0)
+                    .suffix(" мин."),
+            );
+        });
+
+        ui.add_space(8.0);
+        let registered = crate::core::schedule::is_registered();
+        let startup_registered = crate::core::schedule::is_startup_check_registered();
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(if registered { "Задача создана" } else { "Задача не создана" })
+                    .font(font(9.5))
+                    .color(TEXT_DIM),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                widgets::badge(
+                    ui,
+                    if registered { "Активна" } else { "Выключена" },
+                    if registered { SUCCESS } else { TEXT_DIM },
+                );
+            });
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(if startup_registered {
+                    "Задача проверки при входе создана"
+                } else {
+                    "Задача проверки при входе не создана"
+                })
+                .font(font(9.5))
+                .color(TEXT_DIM),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                widgets::badge(
+                    ui,
+                    if startup_registered {
+                        "Активна"
+                    } else {
+                        "Выключена"
+                    },
+                    if startup_registered { SUCCESS } else { TEXT_DIM },
+                );
+            });
+        });
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new(
+                "Изменения применяются автоматически при сохранении настроек. Чистка проходит по безопасным правилам с записью в журнал.",
+            )
+            .font(font(9.0))
+            .color(TEXT_DIM),
+        );
+    });
+
+    card(ui, "Интеграция с Проводником", |ui| {
+        let registered = crate::core::shell::is_reg_preview_registered();
+        ui.label(
+            RichText::new(
+                "Добавляет пункт «Предпросмотр в ChipClean» в контекстное меню файлов .reg — открывает предпросмотр импорта разделов.",
+            )
+            .font(font(10.0))
+            .color(TEXT_MUTED),
+        );
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let action = if registered {
+                "Убрать пункт меню"
+            } else {
+                "Установить пункт меню"
+            };
+            if widgets::secondary_button(ui, action).clicked() {
+                let result = if registered {
+                    crate::core::shell::unregister_reg_preview()
+                } else {
+                    crate::core::shell::register_reg_preview()
+                };
+                if let Err(err) = result {
+                    tracing::warn!(%err, "failed to update shell integration");
+                }
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                widgets::badge(
+                    ui,
+                    if registered { "Установлено" } else { "Не установлено" },
+                    if registered { SUCCESS } else { TEXT_DIM },
+                );
+            });
         });
     });
 }

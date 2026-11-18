@@ -1,7 +1,10 @@
 pub mod cleanup;
 pub mod common;
 pub mod community;
+pub mod disk_analysis;
+pub mod express;
 pub mod format;
+pub mod help;
 pub mod privacy;
 pub mod registry;
 pub mod registry_editor;
@@ -11,5 +14,6 @@ pub mod sidebar;
 pub mod snapshots;
 pub mod startup;
 pub mod traces;
+pub mod tweaks;
 pub mod uninstall;
 pub mod widgets;

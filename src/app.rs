@@ -1,6 +1,7 @@
 use crate::{
     config::{self, Settings},
     core::community_state::CommunityState,
+    core::disk_analysis_state::DiskAnalysisState,
     core::privacy_state::PrivacyState,
     core::registry_editor_state::EditorState,
     core::registry_snapshots_state::SnapshotState,
@@ -9,8 +10,9 @@ use crate::{
     core::startup_state::StartupState,
     core::state::CleanupState,
     core::traces_state::TracesState,
+    core::tweaks_state::TweaksState,
     core::uninstall_state::UninstallState,
-    theme, ui, win,
+    i18n, theme, ui, win,
 };
 use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,64 +24,14 @@ pub enum Page {
     Rollback,
     Privacy,
     Community,
+    Express,
+    DiskAnalysis,
     Startup,
     Traces,
+    Tweaks,
     Programs,
     Settings,
-}
-
-impl Page {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Cleanup => "Очистка",
-            Self::Registry => "Реестр",
-            Self::RegistryEditor => "Редактор реестра",
-            Self::Snapshots => "Снимки реестра",
-            Self::Rollback => "Центр отката",
-            Self::Privacy => "Личные данные",
-            Self::Community => "Чистка сообществом",
-            Self::Startup => "Автозагрузка",
-            Self::Traces => "Следы",
-            Self::Programs => "Программы",
-            Self::Settings => "Настройки",
-        }
-    }
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Cleanup => "Очистка системы",
-            Self::Registry => "Реестр",
-            Self::RegistryEditor => "Редактор реестра",
-            Self::Snapshots => "Снимки реестра",
-            Self::Rollback => "Центр отката",
-            Self::Privacy => "Чистка личных данных",
-            Self::Community => "Чистка сообществом",
-            Self::Startup => "Автозагрузка",
-            Self::Traces => "Следы программ",
-            Self::Programs => "Программы",
-            Self::Settings => "Настройки",
-        }
-    }
-
-    pub fn subtitle(self) -> &'static str {
-        match self {
-            Self::Cleanup => "Сканирование, предпросмотр и безопасное удаление с подтверждением.",
-            Self::Registry => {
-                "Безопасная проверка реестра и обязательный .reg-бэкап перед изменениями."
-            }
-            Self::RegistryEditor => "Просмотр, поиск и изменение реестра с .reg-бэкапами.",
-            Self::Snapshots => "Создание снимков и сравнение изменений реестра.",
-            Self::Rollback => {
-                "Восстановление реестра, карантина следов и отключённой автозагрузки."
-            }
-            Self::Privacy => "История браузеров, списки файлов и недавние документы.",
-            Self::Community => "Правила очистки из открытой базы winapp2.ini.",
-            Self::Startup => "Run/RunOnce, папки «Автозагрузка», планировщик задач и службы.",
-            Self::Traces => "Битые ярлыки и следы программ: карантин или удаление.",
-            Self::Programs => "Установленные программы и запуск их штатных деинсталляторов.",
-            Self::Settings => "Правила очистки, расположение журналов и сведения о сборке.",
-        }
-    }
+    Help,
 }
 
 fn initial_page() -> Page {
@@ -91,9 +43,12 @@ fn initial_page() -> Page {
             "rollback" => Page::Rollback,
             "privacy" => Page::Privacy,
             "community" => Page::Community,
+            "express" => Page::Express,
+            "disk_analysis" => Page::DiskAnalysis,
             "registry" => Page::Registry,
             "startup" => Page::Startup,
             "traces" => Page::Traces,
+            "tweaks" => Page::Tweaks,
             "programs" => Page::Programs,
             "settings" => Page::Settings,
             _ => Page::Cleanup,
@@ -118,8 +73,10 @@ pub struct ChipCleanApp {
     pub rollback: RollbackState,
     pub privacy: PrivacyState,
     pub community: CommunityState,
+    pub disk_analysis: DiskAnalysisState,
     pub startup: StartupState,
     pub traces: TracesState,
+    pub tweaks: TweaksState,
     pub programs: UninstallState,
     pub disk: Option<win::disk::DiskSpace>,
     disk_refreshed: Instant,
@@ -134,6 +91,7 @@ impl ChipCleanApp {
         theme::install(&cc.egui_ctx);
 
         let settings = config::load();
+        i18n::set_lang_force(i18n::Lang::from_code(&settings.lang));
         let cleanup = CleanupState::new(&settings);
         let registry = RegistryState::new();
         let registry_editor = EditorState::new();
@@ -141,11 +99,13 @@ impl ChipCleanApp {
         let rollback = RollbackState::new();
         let privacy = PrivacyState::new();
         let community = CommunityState::new();
+        let disk_analysis = DiskAnalysisState::new();
         let startup = StartupState::new();
         let traces = TracesState::new();
+        let tweaks = TweaksState::new();
         let programs = UninstallState::new();
 
-        Self {
+        let mut app = Self {
             page: initial_page(),
             settings,
             cleanup,
@@ -155,14 +115,33 @@ impl ChipCleanApp {
             rollback,
             privacy,
             community,
+            disk_analysis,
             startup,
             traces,
+            tweaks,
             programs,
             disk: win::disk::system_drive_space().ok(),
             disk_refreshed: Instant::now(),
             elevated: win::elevation::is_elevated(),
             toast: None,
-        }
+        };
+        app.handle_preview_reg_arg();
+        app
+    }
+
+    /// Обрабатывает запуск из контекстного меню Проводника
+    /// (`chipclean.exe --preview-reg <файл>`).
+    fn handle_preview_reg_arg(&mut self) {
+        let args: Vec<String> = std::env::args().collect();
+        let Some(position) = args.iter().position(|arg| arg == "--preview-reg") else {
+            return;
+        };
+        let Some(path) = args.get(position + 1) else {
+            return;
+        };
+        self.registry_editor
+            .open_import_path(std::path::PathBuf::from(path));
+        self.page = Page::RegistryEditor;
     }
 
     pub fn toast(&mut self, text: impl Into<String>) {
@@ -225,6 +204,8 @@ impl eframe::App for ChipCleanApp {
         self.privacy.poll_clean();
         self.community.poll_scan();
         self.community.poll_clean();
+        self.community.poll_update();
+        self.disk_analysis.poll();
         self.startup.poll();
         self.traces.poll();
         self.traces.poll_mutation();
@@ -282,10 +263,22 @@ impl eframe::App for ChipCleanApp {
                 Page::Rollback => ui::rollback::show(ui, &mut self.rollback),
                 Page::Privacy => ui::privacy::show(ui, &mut self.privacy),
                 Page::Community => ui::community::show(ui, &mut self.community),
+                Page::Express => ui::express::show(
+                    ui,
+                    &mut self.cleanup,
+                    &mut self.privacy,
+                    &mut self.startup,
+                    &mut self.tweaks,
+                    self.settings.downloads_older_than_days,
+                    &mut self.page,
+                ),
+                Page::DiskAnalysis => ui::disk_analysis::show(ui, &mut self.disk_analysis),
                 Page::Startup => ui::startup::show(ui, &mut self.startup),
                 Page::Traces => ui::traces::show(ui, &mut self.traces),
+                Page::Tweaks => ui::tweaks::show(ui, &mut self.tweaks),
                 Page::Programs => ui::uninstall::show(ui, &mut self.programs),
                 Page::Settings => ui::settings::show(ui, &mut self.settings),
+                Page::Help => ui::help::show(ui),
             });
 
         if self.settings != settings_before
@@ -293,6 +286,38 @@ impl eframe::App for ChipCleanApp {
         {
             tracing::warn!(%err, "failed to save settings");
             self.toast("Не удалось сохранить настройки");
+        }
+
+        // Синхронизация языка интерфейса.
+        if self.settings.lang != settings_before.lang {
+            i18n::set_lang_force(i18n::Lang::from_code(&self.settings.lang));
+        }
+
+        // Синхронизация фоновой очистки с Планировщиком заданий.
+        let schedule_changed = self.settings.background_cleanup_enabled
+            != settings_before.background_cleanup_enabled
+            || self.settings.background_cleanup_hour != settings_before.background_cleanup_hour
+            || self.settings.background_cleanup_minute != settings_before.background_cleanup_minute;
+        if schedule_changed
+            && let Err(err) = crate::core::schedule::apply_enabled(
+                self.settings.background_cleanup_enabled,
+                self.settings.background_cleanup_hour,
+                self.settings.background_cleanup_minute,
+            )
+        {
+            tracing::warn!(%err, "failed to sync background cleanup task");
+            self.toast("Не удалось обновить задачу фоновой очистки");
+        }
+
+        let startup_check_changed = self.settings.startup_check_enabled
+            != settings_before.startup_check_enabled;
+        if startup_check_changed
+            && let Err(err) = crate::core::schedule::apply_startup_check_enabled(
+                self.settings.startup_check_enabled,
+            )
+        {
+            tracing::warn!(%err, "failed to sync startup check task");
+            self.toast("Не удалось обновить задачу проверки при входе");
         }
 
         self.draw_toast(ui.ctx());

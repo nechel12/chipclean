@@ -18,6 +18,11 @@ pub fn write_json_atomic_compact<T: Serialize>(path: &Path, value: &T) -> Result
     write_atomic(path, &serde_json::to_vec(value)?)
 }
 
+/// Атомарно заменяет файл произвольными байтами (например, скачанной базой).
+pub fn write_bytes_atomic(path: &Path, contents: &[u8]) -> Result<()> {
+    write_atomic(path, contents)
+}
+
 fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()

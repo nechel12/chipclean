@@ -573,6 +573,12 @@ impl EditorState {
         let Some(path) = crate::win::file_dialog::open_reg_file() else {
             return;
         };
+        self.open_import_path(path);
+    }
+
+    /// Открывает предпросмотр импорта конкретного `.reg` файла
+    /// (используется контекстным меню Проводника).
+    pub fn open_import_path(&mut self, path: std::path::PathBuf) {
         self.abort_import();
         self.import_ack = false;
         self.dialog = Some(EditorDialog::Import {

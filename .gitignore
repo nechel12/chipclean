@@ -26,6 +26,10 @@ desktop.ini
 *.local
 /secrets/
 
+# Working artifacts / analysis clones
+/.serena/
+/rea/
+
 # Logs / runtime data
 *.log
 /backups/

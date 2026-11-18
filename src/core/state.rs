@@ -620,6 +620,11 @@ mod tests {
         let settings = Settings {
             max_cleanup: true,
             downloads_older_than_days: 7,
+            background_cleanup_enabled: false,
+            background_cleanup_hour: 12,
+            background_cleanup_minute: 0,
+            startup_check_enabled: false,
+            lang: "ru".to_owned(),
         };
         let state = CleanupState::new(&settings);
 

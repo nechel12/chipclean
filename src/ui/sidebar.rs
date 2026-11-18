@@ -42,10 +42,14 @@ pub fn show(app: &mut ChipCleanApp, root: &mut Ui) {
                     nav(ui, page, Page::Rollback, ph::CLOCK_COUNTER_CLOCKWISE);
                     nav(ui, page, Page::Privacy, ph::FINGERPRINT);
                     nav(ui, page, Page::Community, ph::USERS_THREE);
+                    nav(ui, page, Page::Express, ph::LIGHTNING);
+                    nav(ui, page, Page::DiskAnalysis, ph::HARD_DRIVES);
                     nav(ui, page, Page::Startup, ph::ROCKET_LAUNCH);
                     nav(ui, page, Page::Traces, ph::FOOTPRINTS);
+                    nav(ui, page, Page::Tweaks, ph::SLIDERS_HORIZONTAL);
                     nav(ui, page, Page::Programs, ph::PACKAGE);
                     nav(ui, page, Page::Settings, ph::GEAR_SIX);
+                    nav(ui, page, Page::Help, ph::QUESTION);
                 });
 
             ui.add_space(8.0);

@@ -15,6 +15,11 @@ use crate::core::fs_atomic;
 pub struct Settings {
     pub max_cleanup: bool,
     pub downloads_older_than_days: u32,
+    pub background_cleanup_enabled: bool,
+    pub background_cleanup_hour: u32,
+    pub background_cleanup_minute: u32,
+    pub startup_check_enabled: bool,
+    pub lang: String,
 }
 
 impl Default for Settings {
@@ -22,6 +27,11 @@ impl Default for Settings {
         Self {
             max_cleanup: false,
             downloads_older_than_days: 7,
+            background_cleanup_enabled: false,
+            background_cleanup_hour: 12,
+            background_cleanup_minute: 0,
+            startup_check_enabled: false,
+            lang: "ru".to_owned(),
         }
     }
 }
@@ -29,6 +39,8 @@ impl Default for Settings {
 impl Settings {
     fn normalized(mut self) -> Self {
         self.downloads_older_than_days = self.downloads_older_than_days.clamp(1, 365);
+        self.background_cleanup_hour = self.background_cleanup_hour.min(23);
+        self.background_cleanup_minute = self.background_cleanup_minute.min(59);
         self
     }
 }
@@ -55,6 +67,10 @@ pub fn settings_path() -> PathBuf {
 
 pub fn journal_path() -> PathBuf {
     log_dir().join("operations.jsonl")
+}
+
+pub fn background_result_path() -> PathBuf {
+    log_dir().join("last-background.json")
 }
 
 pub fn backups_dir() -> PathBuf {
