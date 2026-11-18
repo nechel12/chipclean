@@ -20,6 +20,9 @@ pub const TEXT_MUTED: Color32 = Color32::from_rgb(148, 148, 160);
 pub const TEXT_DIM: Color32 = Color32::from_rgb(104, 104, 116);
 pub const SUCCESS: Color32 = Color32::from_rgb(70, 196, 138);
 pub const WARNING: Color32 = Color32::from_rgb(232, 163, 61);
+pub const ERROR: Color32 = Color32::from_rgb(229, 72, 77);
+pub const ERROR_SOFT: Color32 = Color32::from_rgb(52, 22, 26);
+pub const ERROR_TEXT: Color32 = Color32::from_rgb(248, 113, 113);
 
 pub fn font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
