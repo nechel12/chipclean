@@ -26,7 +26,7 @@ pub fn show(ui: &mut Ui, state: &mut RollbackState) {
         .id_salt("rollback-page")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            info_card(ui);
+            info_card(ui, state);
             ui.add_space(14.0);
             summary(ui, state);
             ui.add_space(14.0);
@@ -50,7 +50,7 @@ pub fn show(ui: &mut Ui, state: &mut RollbackState) {
     }
 }
 
-fn info_card(ui: &mut Ui) {
+fn info_card(ui: &mut Ui, state: &mut RollbackState) {
     Frame::new()
         .fill(SURFACE)
         .stroke(Stroke::new(1.0, BORDER))
@@ -89,7 +89,41 @@ fn info_card(ui: &mut Ui) {
                 ui.with_layout(
                     egui::Layout::right_to_left(egui::Align::Center),
                     |ui| {
-                        widgets::badge(ui, "Undo", WARNING);
+                        ui.vertical(|ui| {
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if widgets::secondary_button_icon(
+                                        ui,
+                                        "Точка восстановления",
+                                        ph::SHIELD_CHECK,
+                                    )
+                                    .clicked()
+                                    {
+                                        state.create_restore_point();
+                                    }
+                                    ui.add_space(6.0);
+                                    widgets::badge(ui, "Undo", WARNING);
+                                },
+                            );
+                            if let Some(message) = &state.message {
+                                ui.add_space(4.0);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(
+                                            RichText::new(&message.text)
+                                                .font(font(9.0))
+                                                .color(if message.is_error {
+                                                    ERROR
+                                                } else {
+                                                    SUCCESS
+                                                }),
+                                        );
+                                    },
+                                );
+                            }
+                        });
                     },
                 );
             });

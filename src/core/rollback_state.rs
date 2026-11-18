@@ -89,6 +89,23 @@ pub struct RollbackState {
 }
 
 impl RollbackState {
+    pub fn create_restore_point(&mut self) {
+        match crate::core::restore_point::create("ChipClean: перед операциями отката") {
+            Ok(()) => {
+                self.message = Some(Message {
+                    text: "Точка восстановления Windows создана.".to_owned(),
+                    is_error: false,
+                });
+            }
+            Err(err) => {
+                self.message = Some(Message {
+                    text: format!("Не удалось создать точку восстановления: {err}"),
+                    is_error: true,
+                });
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             inventory: Inventory::default(),
