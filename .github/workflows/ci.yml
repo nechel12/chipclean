@@ -4,49 +4,35 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  check:
-    name: fmt, clippy, test
-    runs-on: windows-latest
+  ci:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Format
+        run: cargo fmt --check
 
-      - name: Run clippy
+      - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Run tests
+      - name: Test
         run: cargo test
 
-  audit:
-    name: security audit
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Audit dependencies
-        uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build (release)
+        run: cargo build --release

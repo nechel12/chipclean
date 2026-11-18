@@ -11,6 +11,11 @@ use crate::{
 pub fn show(ui: &mut Ui) {
     common::page_header(ui, Page::Help);
 
+    egui::ScrollArea::vertical()
+        .id_salt("help-page")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+
     let lang = current();
 
     let (what_title, what_lines) = match lang {
@@ -94,6 +99,8 @@ pub fn show(ui: &mut Ui) {
     {
         tracing::warn!(%err, "failed to open guide");
     }
+
+        });
 }
 
 fn card(ui: &mut Ui, title: &str, lines: &[&str]) {

@@ -12,7 +12,11 @@ use crate::{
 pub fn show(ui: &mut Ui, settings: &mut Settings) {
     common::page_header(ui, Page::Settings);
 
-    ui.columns(2, |columns| {
+    egui::ScrollArea::vertical()
+        .id_salt("settings-page")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+        ui.columns(2, |columns| {
         card(
             &mut columns[0],
             "Правила «Загрузок»",
@@ -347,6 +351,7 @@ pub fn show(ui: &mut Ui, settings: &mut Settings) {
                 );
             });
         });
+    });
     });
 }
 

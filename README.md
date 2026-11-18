@@ -1,277 +1,95 @@
 # ChipClean
 
-Быстрая утилита для очистки и обслуживания Windows на Rust. Нативный интерфейс,
-тёмная красно-чёрная тема, предпросмотр найденного, обязательное подтверждение,
-`.reg`-бэкап перед изменением реестра, обратимая автозагрузка, запуск штатных
-деинсталляторов и поиск следов удалённых программ.
+[![CI](https://github.com/nechel12/chipclean/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nechel12/chipclean/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/nechel12/chipclean)](https://github.com/nechel12/chipclean/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/nechel12/chipclean/total)](https://github.com/nechel12/chipclean/releases)
+[![License](https://img.shields.io/github/license/nechel12/chipclean)](LICENSE)
 
-> Статус: рабочая beta. Реализованы очистка файлов, безопасное подмножество
-> реестра, автозагрузка, планировщик задач, службы, редактор реестра с импортом
-> `.reg` и заменой значений, снимки произвольных веток, центр отката, личные
-> данные, база winapp2, список программ, поиск следов и тестовый глубокий поиск.
-> Установщик и иконка — следующие этапы.
+Fast, safe Windows cleaner and registry optimizer — written in Rust, inspired
+by Reg Organizer. Everything runs locally: no telemetry, no cloud uploads.
 
-## Что уже работает
+> Status: pre-1.0. Settings and internal formats may change in minor releases;
+> changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
-- Нативное окно `eframe/egui` без WebView, системный Segoe UI и Phosphor-иконки.
-- 19 категорий очистки в трёх группах: система, браузеры/GPU, личные данные.
-- Реальное сканирование: размер, количество файлов, ошибки доступа, отмена.
-- Предпросмотр перед удалением: список разделов, объём, количество файлов и
-  недоступные объекты.
-- Двухступенчатое подтверждение для «Загрузок», корзины и карантина.
-- Отдельное подтверждение для Windows.old и загруженных обновлений: откат
-  Windows и повторная загрузка пакетов станут недоступны.
-- «Максимальная чистка» выбирает все 19 разделов, включая очистку карантина.
-- Безопасное удаление только обычных файлов: без каталогов, символических ссылок
-  и reparse points.
-- Проверка реестра: неверные записи деинсталляции, автозагрузки и App Paths;
-  обязательный `.reg`-бэкап перед изменением.
-- Менеджер автозагрузки: HKCU/HKLM Run и RunOnce, папки «Автозагрузка»;
-  подтверждение каждого изменения, обратимое отключение через `.reg`-бэкап и
-  карантин.
-- Планировщик задач: список задач, отключение и включение через Task Scheduler
-  COM API с отдельным подтверждением.
-- Службы: список служб и переключение типа запуска (авто/вручную/отключена);
-  исходный тип и задержка запуска сохраняются для возврата.
-- Редактор реестра: дерево HKCU/HKLM/HKCR/HKU/HKCC, поиск, создание и удаление
-  разделов и значений, редактирование типов REG_SZ, DWORD, QWORD, MULTI_SZ и
-  BINARY; перед изменением создаётся `.reg`-бэкап.
-- Импорт `.reg`: предпросмотр разделов и значений до применения, отказ при
-  изменении файла между предпросмотром и импортом, страховочный экспорт
-  существующих разделов.
-- Поиск и замена в реестре: только текстовые значения (REG_SZ, REG_EXPAND_SZ,
-  REG_MULTI_SZ) в выбранной ветке или во всём улье, значение перепроверяется
-  перед записью, обязательный `.reg`-бэкап и подтверждение.
-- Снимки реестра: выбранные ветки, произвольный раздел или полный улей
-  HKCU/HKLM/HKCR/HKU/HKCC; сравнение с текущим состоянием, списки
-  добавленных/удалённых разделов и изменённых значений.
-- Центр отката: `.reg`-бэкапы, карантин следов, отключённая автозагрузка и
-  последние события журнала в одном месте. Восстановление реестра перед
-  импортом сохраняет страховочные копии затронутых разделов.
-- Деинсталлятор: после запуска штатного удаления можно сразу перейти к поиску
-  следов; имя программы показывается в баннере, скан перезапускается принудительно.
-- Чистка личных данных: история и списки переходов, RunMRU, TypedPaths,
-  RecentDocs, поиск, кэш уведомлений и история/куки Edge, Chrome и Firefox.
-  Firefox: удаляются посещения, осиротевшие URL и inputhistory, закладки сохраняются;
-  браузерные WAL/SHM-файлы также очищаются при закрытом браузере.
-- Чистка сообществом: импорт открытой базы `winapp2.ini`, FileKey/RegKey,
-  Detect, Default, Warning и ExcludeKey; очистка только после подтверждения.
-  RegKey применяется только к HKCU и HKLM, FileKey с REGEX пропускается.
-- Список установленных программ: поиск, сортировка, издатель, версия, размер,
-  источник, открытие папки установки и запуск штатного деинсталлятора.
-- MSI-программы удаляются через `msiexec /X`; ChipClean не удаляет программы сам.
-- Поиск следов удалённых программ: битые ярлыки в меню «Пуск»/на рабочем столе и
-  папки в Program Files с деинсталлятором, но без записи Uninstall.
-- Тестовый глубокий поиск по AppData/ProgramData с явным предупреждением о
-  возможных ложных срабатываниях; по умолчанию выключен.
-- Найденные следы можно переместить в карантин или удалить сразу. Удаление
-  требует отдельного подтверждения и необратимо.
-- Карантин можно очистить через раздел очистки «Карантин ChipClean».
-- Журнал операций в JSONL: `%LOCALAPPDATA%\ChipClean\ChipClean\data\operations.jsonl`;
-  при размере 10 МБ он ротируется в `operations.jsonl.1` (хранится один архив).
-- Бэкапы реестра: `%LOCALAPPDATA%\ChipClean\ChipClean\data\backups`.
-- Карантин автозагрузки: `%LOCALAPPDATA%\ChipClean\ChipClean\data\startup-disabled`.
-- Карантин следов: `%LOCALAPPDATA%\ChipClean\ChipClean\data\traces-quarantine`.
-- Состояние отключённых записей: `%LOCALAPPDATA%\ChipClean\ChipClean\data\disabled-startup.json`.
-- Состояние отключённых служб: `%LOCALAPPDATA%\ChipClean\ChipClean\data\disabled-services.json`.
-- Состояние карантина следов: `%LOCALAPPDATA%\ChipClean\ChipClean\data\traces-quarantine.json`.
-- Снимки реестра: `%LOCALAPPDATA%\ChipClean\ChipClean\data\snapshots`.
-- База сообщества: `%LOCALAPPDATA%\ChipClean\ChipClean\data\winapp2.ini`.
-- Настройки: `%APPDATA%\ChipClean\ChipClean\config\settings.json`.
-- Запрос прав администратора через UAC при запуске release-сборки.
-- Длительные операции — сканирование, очистка, поиск и изменения реестра,
-  автозагрузки и следов — выполняются в фоновых потоках, интерфейс не блокируется.
-  Отмена доступна в очистке, приватности, сообществе, редакторе реестра и снимках.
+## Features
 
-## Пока не реализовано
+| Module | What it does |
+|---|---|
+| Очистка системы | Temporary files, caches, logs, error reports, Windows updates, Recycle Bin, downloads. |
+| Реестр | Safe check, editor with search/replace, `.reg` import with preview, snapshots, rollback. |
+| Автозагрузка | Run/RunOnce, startup folders, Task Scheduler tasks, services — disable with quarantine. |
+| Личные данные | Browser history, recent documents, file lists. |
+| Чистка сообществом | winapp2.ini rules with online database update. |
+| Твики | Hidden Windows settings (51 tweaks) with `.reg` backups before each change. |
+| Фоновая очистка | Daily task and logon check via Task Scheduler. |
+| Экспресс-проверка | One button runs all scans. |
+| Анализ диска | Largest files and volume usage. |
+| Откат | Registry backups, quarantine restore, Windows restore point creation. |
+| Интеграция | Context menu for `.reg` files («Предпросмотр в ChipClean»). |
 
-- Полный поиск остатков по всему реестру и базе установщиков.
-- Удаление задач и служб (сейчас доступно только обратимое отключение).
-- Автоматическое скачивание и проверка базы сообщества.
-- Иконка приложения, установщик и подпись бинарников.
+## System requirements
 
-## Стек
+- Windows 10/11 x64 (administrator rights for most operations)
+- The app requests elevation (UAC) on start
 
-| Слой | Решение |
-|------|---------|
-| Язык | Rust 2024, MSVC, Windows 10/11 x64 |
-| GUI | `eframe` / `egui` 0.36, `egui-phosphor` 0.14 |
-| Win32 | `windows` 0.62: Shell, COM, Task Scheduler, SCM, файловая система, UAC, корзина |
-| Реестр | `windows-registry` 0.100, `reg.exe export/import` для бэкапов и восстановления |
-| Сканирование и очистка | `walkdir`, `crossbeam-channel`, `glob`, фоновые потоки |
-| Данные | `serde`, `serde_json`, `directories`, `chrono` |
-| Логи | `tracing`, `tracing-appender`, `tracing-subscriber` |
-| Ошибки | `anyhow` |
-| Один экземпляр | `single-instance` |
+## Install
 
-`rayon`/`sysinfo` — только если профилирование покажет пользу.
-
-## Структура
-
-```text
-src/
-  main.rs              точка входа, логирование, UAC, единственный экземпляр
-  app.rs               состояние приложения, навигация, тосты
-  theme.rs             палитра, типографика, системные шрифты, стили egui
-  config.rs            настройки, журнал, бэкапы, карантины и каталоги данных
-  ui/
-    sidebar.rs         логотип, навигация, статус администратора, диск
-    cleanup.rs         экран очистки, подтверждения, прогресс
-    registry.rs        проверка реестра, результаты, подтверждение и бэкап
-    registry_editor.rs дерево, поиск, импорт и редактирование реестра
-    snapshots.rs       создание снимков и просмотр различий
-    rollback.rs        центр отката: бэкапы, карантин, автозагрузка, журнал
-    privacy.rs         чистка личных данных
-    community.rs       база winapp2.ini и очистка сообществом
-    startup.rs         автозагрузка, задачи, службы, подтверждения
-    traces.rs          битые ярлыки и осиротевшие папки, карантин
-    uninstall.rs       список программ и запуск деинсталляторов
-    settings.rs        правила «Загрузок», гарантии, пути, о программе
-    widgets.rs         навигация, чекбоксы, кнопки, переключатели, прогресс
-    common.rs          заголовки страниц
-    format.rs          размеры и склонение «файл/запись»
-  core/
-    model.rs           модели категорий и источников путей
-    catalog.rs         каталог 19 разделов чистки
-    scanner.rs         общий обход файлов и read-only скан
-    cleaner.rs         безопасное удаление и события очистки
-    safety.rs          классификация рисков файловых и реестровых правил
-    path_guard.rs      проверка вложенности путей
-    fs_atomic.rs       атомарная запись JSON-состояний
-    fs_move.rs         перемещение файлов и каталогов между томами
-    job.rs             фоновые задания, каналы событий и отмена
-    registry.rs        проверки реестра, экспорт .reg и удаление записей
-    registry_state.rs  состояние проверки/очистки реестра
-    registry_editor.rs дерево, значения, поиск, запись и импорт реестра
-    registry_editor_state.rs состояние редактора и диалогов
-    registry_import.rs предпросмотр и импорт .reg-файлов
-    registry_snapshots.rs снимки, хеши и сравнение
-    registry_snapshots_state.rs состояние страницы снимков
-    reg_file.rs        разбор .reg: кодировка, ульи и пути
-    rollback.rs        инвентаризация бэкапов, карантина и автозагрузки
-    rollback_state.rs  состояние центра отката и подтверждений
-    privacy.rs         цели личных данных, файловый и реестровый скан
-    privacy_state.rs   состояние очистки личных данных
-    community.rs       парсер winapp2.ini
-    community_state.rs состояние страницы сообщества
-    startup.rs         чтение, отключение и возврат автозагрузки
-    startup_state.rs   состояние страницы автозагрузки и подтверждений
-    tasks.rs           Task Scheduler COM: задачи и переключение
-    services.rs        SCM: службы, тип запуска и состояние
-    traces.rs          поиск следов, карантин и восстановление
-    traces_state.rs    состояние страницы следов
-    quarantine.rs      статистика и очистка карантина ChipClean
-    uninstall.rs       чтение установленных программ и запуск деинсталляторов
-    uninstall_state.rs состояние страницы программ
-    journal.rs         JSONL-журнал операций
-    state.rs           состояние очистки файлов, подтверждения, отмена
-  win/
-    elevation.rs       проверка прав и перезапуск через UAC
-    paths.rs           известные папки (Downloads)
-    disk.rs            свободное место на системном диске
-    recycle_bin.rs     размер и очистка корзины
-    file_dialog.rs     системный диалог выбора .reg-файла
-    profile.rs         текущий пользователь и путь профиля
-    dialog.rs          системные сообщения об ошибках
-```
-
-## Безопасность
-
-- Удаление всегда начинается с предпросмотра и подтверждения.
-- «Загрузки», корзина и карантин требуют отдельного второго подтверждения.
-- Windows.old и загруженные обновления требуют отдельного чекбокса: удаление
-  Windows.old лишает возможности откатить систему, обновления будут скачаны заново.
-- Удаляются только обычные файлы; каталоги и reparse points не затрагиваются.
-- «Загрузки» очищаются только на верхнем уровне и только старше выбранного срока.
-- Корзина очищается полностью; это явно написано в подтверждении.
-- Реестр проверяется только по безопасному подмножеству ключей.
-- Перед изменением реестра создаётся `.reg`-бэкап; если бэкап не создан, удаление
-  не начинается.
-- Отключение автозагрузки обратимо: реестр восстанавливается из сохранённого
-  значения и `.reg`-бэкапа, файлы папок — из карантина.
-- Автозагрузка, задачи и службы не удаляются: ChipClean только переключает их
-  автозапуск, предварительно показывая отдельное подтверждение.
-- Для служб сохраняется исходный тип запуска и признак отложенного старта;
-  работающая служба не останавливается и продолжит работу до перезагрузки.
-  Службы, отключённые вне ChipClean, показываются с предупреждением: их можно
-  перевести только в ручной запуск, автозапуск не включается.
-- Редактор реестра создаёт `.reg`-бэкап перед созданием раздела, записью или
-  удалением значения/раздела; перед рекурсивным удалением показывается число
-  подразделов и значений. Операции попадают в журнал. Запись в HKLM/HKCR/HKU/HKCC
-  требует прав.
-- Импорт `.reg` начинается только с предпросмотра: показываются разделы, значения
-  и удаления, файл ограничен по размеру и числу ключей. Файл, удаляющий разделы,
-  требует отдельного чекбокса подтверждения. Перед импортом файл повторно читается,
-  а существующие разделы сохраняются в страховочные `.reg`-бэкапы; при изменении
-  файла импорт отменяется.
-- Очистка не удаляет файлы, изменённые после начала скана: предпросмотр и удаление
-  согласованы по времени.
-- Замена значений реестра работает только с REG_SZ, REG_EXPAND_SZ и REG_MULTI_SZ
-  в пределах выбранной ветки, требует отдельного подтверждения и `.reg`-бэкапа,
-  а перед записью перепроверяет, что значение не изменилось.
-- Снимки хранят хеши и короткие превью значений, а не полные данные; сравнение
-  ограничено выбранными ветками и лимитом разделов. Полный улей тоже подчиняется
-  лимиту разделов.
-- Центр отката восстанавливает реестр только из `.reg`-файлов внутри каталога
-  бэкапов, предварительно сохраняя страховочные копии затронутых разделов.
-  Восстановление из `.reg` требует отдельного чекбокса подтверждения.
-- Личные данные и база сообщества удаляются безвозвратно после отдельного
-  подтверждения. Для базы `winapp2.ini` действует предупреждение: разработчики
-  ChipClean не проверяют правила сообщества.
-- Программы удаляются только их штатным деинсталлятором после подтверждения.
-- Следы программ ищутся по безопасному набору; найденное можно переместить в
-  карантин или удалить сразу. Удаление требует чекбокса «восстановление невозможно».
-- Глубокий поиск по AppData/ProgramData — тестовая эвристика, по умолчанию
-  выключена и сопровождается предупреждением о ложных срабатываниях.
-- Очистка карантина выполняется только через отдельный раздел очистки с повторным
-  подтверждением.
-- В журнал пишутся успешные операции и ошибки; если журнал не удалось записать
-  при очистке личных данных, это показывается в отчёте.
-- В release-сборке приложение требует права администратора.
-
-## Сборка и запуск
-
-Требуются Rust stable и Visual Studio Build Tools (MSVC).
+Download the latest `chipclean.exe` from
+[Releases](https://github.com/nechel12/chipclean/releases/latest). No installer
+is required: put the file anywhere and run it. Verify the checksum against
+`SHA256SUMS.txt` of the release:
 
 ```powershell
+(Get-FileHash .\chipclean.exe).Hash
+```
+
+## Quick start
+
+1. Run `chipclean.exe` (allow UAC).
+2. Open «Очистка системы» → select categories → «Сканировать» → preview → confirm.
+3. Use «Реестр» to inspect/fix registry problems; changes are backed up to `.reg`.
+4. «Твики» lists hidden system settings; each change saves a `.reg` backup first.
+5. «Настройки» → «Фоновая очистка» registers a daily task and a logon check.
+
+## Background cleanup
+
+The scheduler runs the same `chipclean.exe` with `--background-cleanup`.
+
+## Build from source
+
+[Rust](https://rustup.rs/) 1.95+:
+
+```sh
 cargo build --release
-.\target\release\chipclean.exe
-```
-
-Для разработки можно отключить UAC-перезапуск (только debug-сборка):
-
-```powershell
-$env:CHIPCLEAN_SKIP_ELEVATION = "1"
-cargo run
-```
-
-Проверки:
-
-```powershell
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
 cargo test
-cargo install cargo-audit --locked   # один раз
-cargo audit
+cargo clippy --all-targets
+cargo fmt --check
 ```
 
-Те же проверки (кроме `cargo audit`) выполняются в GitHub Actions на
-`windows-latest` для push в `main` и pull request; отдельная job проверяет
-зависимости через RustSec (`rustsec/audit-check`).
+## Data and privacy
 
-В тестах есть безопасные проверки `.reg`-бэкапа и удаления на временном ключе,
-обратимого отключения автозагрузки, карантина файлов/папок, хранилища служб,
-редактора реестра, импорта `.reg`, поиска-замены, снимков произвольных веток,
-центра отката, личных данных и разбора winapp2. Разрушительный тест корзины
-помечен `#[ignore]`; реальные службы и личные данные в тестах не затрагиваются.
+- All operations are written to a local operations journal.
+- Tweak changes create `.reg` backups under the app data folder.
+- The community rules database is downloaded **only** when you press the button;
+  no local data is ever uploaded.
 
-## Дорожная карта
+## Security
 
-1. Доработка глубокого поиска и поиск по базе установщиков.
-2. Иконка приложения, установщик и автоматические релизы Windows.
-3. Управление драйверами и точками восстановления.
-4. Расширение личных данных приложениями и загрузка winapp2.ini из интернета.
+See [SECURITY.md](SECURITY.md) for reporting. Do not post registry data or
+personal files in public issues.
 
-## Лицензия
+## Related projects
 
-Проект распространяется по лицензии [Apache License 2.0](LICENSE).
+- [Reg Organizer](https://www.chemtable.com/) — the original tool whose
+  tweak catalog and behavior inspire ChipClean (data ported from the open
+  config file, Apache-2.0 compatible direction).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md); participation implies agreement with
+the [Code of Conduct](CODE_OF_CONDUCT.md). Release process and tag
+verification are in [RELEASING.md](RELEASING.md).
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).

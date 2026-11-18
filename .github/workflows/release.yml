@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Stage artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release-artifacts | Out-Null
+          Copy-Item target/release/chipclean.exe release-artifacts/chipclean-x64.exe
+          $hash = (Get-FileHash release-artifacts/chipclean-x64.exe -Algorithm SHA256).Hash.ToLower()
+          Set-Content release-artifacts/SHA256SUMS.txt "$hash  chipclean-x64.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release-artifacts
+
+  release:
+    name: Create GitHub Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-artifacts
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/**
+          generate_release_notes: true
